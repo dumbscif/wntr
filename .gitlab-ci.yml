@@ -2,14 +2,30 @@
 # Sweeps run from a pipeline schedule (set to 4 AM and 4 PM America/Denver),
 # or by clicking "Run pipeline". Each run picks up the previous archive from the
 # live Pages site, so nothing has to be committed back to the repo.
+# Free plan = 400 compute minutes/month. A sweep is time-boxed (WNTR_TIME_BUDGET) and pip is cached,
+# so each run takes ~2-3 minutes; twice a day is ~150-180 minutes a month.
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  WNTR_TIME_BUDGET: "180"
+  WNTR_NOMINATIM_CAP: "10"
+  WNTR_LINKCHECK_CAP: "25"
+  GIT_DEPTH: "1"
+
 pages:
   image: python:3.12-slim
+  interruptible: true
+  resource_group: pages
+  cache:
+    key: pip-py312-v1
+    paths:
+      - .cache/pip
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "api"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-  timeout: 45 minutes
+  timeout: 10 minutes
   script:
     - pip install -q -r requirements.txt
     - |
@@ -24,7 +40,7 @@ pages:
               break
           try:
               req = urllib.request.Request(f"{base}/{rel}", headers={"User-Agent": "wntr-sweep"})
-              body = urllib.request.urlopen(req, timeout=60).read()
+              body = urllib.request.urlopen(req, timeout=20).read()
               if rel.endswith("events.json") and len(body) < 1000:
                   continue
               os.makedirs(os.path.dirname(dest), exist_ok=True)

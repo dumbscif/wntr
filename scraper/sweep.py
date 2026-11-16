@@ -9,7 +9,8 @@ links, recomputes Flap Watch, and writes docs/data/events.json.
     python scraper/sweep.py --quick       # fewer Google queries (testing)
     python scraper/sweep.py --no-linkcheck
 """
-import argparse, hashlib, json, os, re, sys, time
+import argparse, hashlib, json, os, re, sys, threading, time
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait as fwait
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse, parse_qs, urlunparse, unquote
@@ -34,43 +35,57 @@ NOW_ISO = NOW.isoformat().replace("+00:00", "Z")
 session = requests.Session()
 session.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.8,*;q=0.5"})
 status = {}  # source family -> stats
+_lock = threading.Lock()
+T0 = time.time()
+TIME_BUDGET = float(os.environ.get("WNTR_TIME_BUDGET", "180"))   # seconds for the whole fetch phase
+WORKERS = int(os.environ.get("WNTR_WORKERS", "16"))
+LINKCHECK_CAP = int(os.environ.get("WNTR_LINKCHECK_CAP", "25"))
+# max simultaneous requests per site family (be polite; Reddit and Mastodon rate-limit hard)
+FAMILY_LIMIT = {"Google News": 8, "Bing News": 6, "Reddit": 1, "Mastodon": 2, "UFO Meldpunt Nederland": 3}
+_sems = {}
 
 def stat(family, **kw):
-    s = status.setdefault(family, {"name": family, "requests": 0, "ok": 0, "failed": 0, "items": 0, "kept": 0, "errors": []})
-    for k, v in kw.items():
-        if k == "error":
-            if len(s["errors"]) < 3:
-                s["errors"].append(v[:160])
-        else:
-            s[k] += v
+    with _lock:
+        s = status.setdefault(family, {"name": family, "requests": 0, "ok": 0, "failed": 0, "items": 0, "kept": 0, "skipped": 0, "errors": []})
+        for k, v in kw.items():
+            if k == "error":
+                if len(s["errors"]) < 3:
+                    s["errors"].append(v[:160])
+            else:
+                s[k] = s.get(k, 0) + v
 
-BUDGET = {"Google News": 480, "Bing News": 180, "Reddit": 150, "Mastodon": 90, "GDELT": 60, "UFO Meldpunt Nederland": 120}
-_started = {}
+def time_left():
+    return TIME_BUDGET - (time.time() - T0)
 
 def get(url, family, delay=0.0, retries=1, **kw):
-    t0 = _started.setdefault(family, time.time())
-    if time.time() - t0 > BUDGET.get(family, 180):
-        stat(family, requests=1, failed=1, error="time budget reached; remaining requests skipped this sweep")
+    if time_left() <= 0:
+        stat(family, skipped=1, error="overall time budget reached; remaining requests skipped this sweep")
         return None
-    if delay:
-        time.sleep(delay)
-    stat(family, requests=1)
-    for attempt in range(retries + 1):
-        try:
-            r = session.get(url, timeout=(10, 20), **kw)
-            if r.status_code in (429, 503) and attempt < retries:
-                time.sleep(8 * (attempt + 1))
-                continue
-            if r.ok:
-                stat(family, ok=1)
-                return r
-            stat(family, failed=1, error=f"HTTP {r.status_code} {url[:90]}")
+    with _lock:
+        sem = _sems.setdefault(family, threading.Semaphore(FAMILY_LIMIT.get(family, 4)))
+    with sem:
+        if delay and time_left() > 0:
+            time.sleep(min(delay, max(0.0, time_left())))
+        if time_left() <= 0:  # budget may have run out while queued behind other requests
+            stat(family, skipped=1, error="overall time budget reached; remaining requests skipped this sweep")
             return None
-        except Exception as e:
-            if attempt >= retries:
-                stat(family, failed=1, error=f"{type(e).__name__} {url[:90]}")
+        stat(family, requests=1)
+        for attempt in range(retries + 1):
+            try:
+                r = session.get(url, timeout=(5, 10), **kw)
+                if r.status_code in (429, 503) and attempt < retries and time_left() > 20:
+                    time.sleep(4 * (attempt + 1))
+                    continue
+                if r.ok:
+                    stat(family, ok=1)
+                    return r
+                stat(family, failed=1, error=f"HTTP {r.status_code} {url[:90]}")
                 return None
-            time.sleep(3)
+            except Exception as e:
+                if attempt >= retries or time_left() <= 10:
+                    stat(family, failed=1, error=f"{type(e).__name__} {url[:90]}")
+                    return None
+                time.sleep(1)
 
 def to_dt(entry):
     for k in ("published_parsed", "updated_parsed"):
@@ -113,7 +128,7 @@ def jacc(a, b):
 
 # ---------------------------------------------------------------- fetchers
 def feed_items(fetch, family, raw_name=None):
-    r = get(fetch["url"], family, delay=fetch.get("delay", 1.2))
+    r = get(fetch["url"], family, delay=fetch.get("delay", 0.2))
     if not r:
         return []
     d = feedparser.parse(r.content)
@@ -141,78 +156,72 @@ def feed_items(fetch, family, raw_name=None):
     stat(family, items=len(out))
     return out
 
-def fetch_google(quick):
+def mastodon_tag(tag):
     items = []
-    feeds = list(S.google_news_feeds())
-    if quick:
-        feeds = feeds[::6]
-    for f in feeds:
-        items += feed_items(f, "Google News")
-    return items
-
-def fetch_bing():
-    items = []
-    for f in S.bing_feeds():
-        items += feed_items(f, "Bing News")
-    return items
-
-def fetch_reddit():
-    items = []
-    for sub in S.REDDIT_SUBS:
-        f = {"url": f"https://www.reddit.com/r/{sub}/new/.rss?limit=50", "delay": 10, "topic_feed": True, "edition": "r/" + sub}
-        for it in feed_items(f, "Reddit", raw_name=f"Reddit r/{sub} (user post)"):
-            items.append(it)
-    return items
-
-def fetch_mastodon():
-    items = []
-    for tag in S.MASTODON_TAGS:
-        r = get(f"https://mastodon.social/api/v1/timelines/tag/{tag}?limit=40", "Mastodon", delay=1)
-        if not r:
-            continue
-        try:
-            posts = r.json()
-        except Exception:
-            continue
-        stat("Mastodon", items=len(posts))
-        for p in posts:
-            txt = clean(p.get("content", ""))
-            if not txt or p.get("reblog"):
-                continue
-            items.append({"title": txt[:140], "summary": txt[:700], "url": p.get("url") or p.get("uri"),
-                          "published": datetime.fromisoformat(p["created_at"].replace("Z", "+00:00")) if p.get("created_at") else None,
-                          "publisher": "Mastodon @" + (p.get("account", {}).get("acct", "?")) + " (user post)", "family": "Mastodon",
-                          "edition": "#" + tag, "region": None, "topic_feed": True})
-    return items
-
-def fetch_extra_rss():
-    items = []
-    for name, url in S.EXTRA_RSS:
-        items += feed_items({"url": url, "edition": name}, "Specialist UFO news RSS", raw_name=name)
-    return items
-
-def fetch_gdelt():
-    r = get(S.GDELT_URL, "GDELT", delay=6, retries=1)
+    r = get(f"https://mastodon.social/api/v1/timelines/tag/{tag}?limit=40", "Mastodon", delay=0.5)
     if not r:
-        return []
+        return items
     try:
-        arts = r.json().get("articles", [])
+        posts = r.json()
     except Exception:
-        stat("GDELT", error="non-JSON reply (rate limited?)")
-        return []
-    stat("GDELT", items=len(arts))
+        return items
+    stat("Mastodon", items=len(posts))
+    for p in posts:
+        txt = clean(p.get("content", ""))
+        if not txt or p.get("reblog"):
+            continue
+        items.append({"title": txt[:140], "summary": txt[:700], "url": p.get("url") or p.get("uri"),
+                      "published": datetime.fromisoformat(p["created_at"].replace("Z", "+00:00")) if p.get("created_at") else None,
+                      "publisher": "Mastodon @" + (p.get("account", {}).get("acct", "?")) + " (user post)", "family": "Mastodon",
+                      "edition": "#" + tag, "region": None, "topic_feed": True})
+    return items
+
+def fetch_tasks(quick, known):
+    """Every source request as an independent (family, callable) task, run concurrently."""
+    tasks = []
+    g = list(S.google_news_feeds())
+    if quick:
+        g = g[::6]
+    tasks += [("Google News", lambda f=f: feed_items(f, "Google News")) for f in g]
+    tasks += [("Bing News", lambda f=f: feed_items(f, "Bing News")) for f in S.bing_feeds()]
+    for sub in S.REDDIT_SUBS:
+        f = {"url": f"https://www.reddit.com/r/{sub}/new/.rss?limit=50", "delay": 6, "topic_feed": True, "edition": "r/" + sub}
+        tasks.append(("Reddit", lambda f=f, sub=sub: feed_items(f, "Reddit", raw_name=f"Reddit r/{sub} (user post)")))
+    tasks += [("Mastodon", lambda t=t: mastodon_tag(t)) for t in S.MASTODON_TAGS]
+    tasks += [("Specialist UFO news RSS", lambda n=n, u=u: feed_items({"url": u, "edition": n}, "Specialist UFO news RSS", raw_name=n))
+              for n, u in S.EXTRA_RSS]
+    tasks.append(("UFO Meldpunt Nederland", lambda: fetch_meldpunt(known)))
+    # interleave families so a time-budget cut never starves one whole source family
+    fams = {}
+    for t in tasks:
+        fams.setdefault(t[0], []).append(t)
+    order = sorted(fams.values(), key=len)
     out = []
-    for a in arts:
-        try:
-            dt = datetime.strptime(a.get("seendate", ""), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
-        except Exception:
-            dt = None
-        out.append({"title": clean(a.get("title", "")), "summary": "", "url": a.get("url"), "published": dt,
-                    "publisher": a.get("domain"), "family": "GDELT", "edition": a.get("sourcecountry"), "region": None, "topic_feed": False})
+    while any(order):
+        for lst in order:
+            if lst:
+                out.append(lst.pop(0))
     return out
 
+def run_fetch(tasks):
+    raw, per = [], {}
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        futs = {ex.submit(fn): fam for fam, fn in tasks}
+        for fu in as_completed(futs):
+            fam = futs[fu]
+            try:
+                got = fu.result() or []
+            except Exception as e:  # one broken source never stops the sweep
+                stat(fam, failed=1, error=f"crash {type(e).__name__}: {e}")
+                got = []
+            per[fam] = per.get(fam, 0) + len(got)
+            raw += got
+    for fam, n in per.items():
+        print(f"{fam}: {n} raw items", flush=True)
+    return raw
+
 def fetch_meldpunt(known_urls):
-    r = get(S.MELDPUNT_HOME, "UFO Meldpunt Nederland", delay=1)
+    r = get(S.MELDPUNT_HOME, "UFO Meldpunt Nederland")
     if not r:
         return []
     links = []
@@ -221,10 +230,10 @@ def fetch_meldpunt(known_urls):
             links.append(m.group(1))
     stat("UFO Meldpunt Nederland", items=len(links))
     out = []
-    for link in links[:20]:
-        if norm_url(link) in known_urls:
-            continue
-        p = get(link, "UFO Meldpunt Nederland", delay=1.5)
+    todo = [l for l in links[:20] if norm_url(l) not in known_urls]
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        pages = list(ex.map(lambda l: (l, get(l, "UFO Meldpunt Nederland", delay=0.3)), todo))
+    for link, p in pages:
         if not p:
             continue
         t = re.sub(r"<script.*?</script>|<style.*?</style>", " ", p.text, flags=re.S)
@@ -255,7 +264,20 @@ def fetch_meldpunt(known_urls):
     return out
 
 # ---------------------------------------------------------------- link check
-def link_check(reports, limit=80):
+def _probe(url):
+    try:
+        h = session.head(url, timeout=(5, 8), allow_redirects=True)
+        code = h.status_code
+        if code in (403, 405, 400, 501):
+            g = session.get(url, timeout=(5, 8), allow_redirects=True, stream=True)
+            code = g.status_code
+            g.close()
+        return code
+    except Exception:
+        return None
+
+def link_check(reports, limit=None):
+    limit = LINKCHECK_CAP if limit is None else limit
     cands = []
     for r in reports:
         for s in r.get("sources", []):
@@ -263,28 +285,24 @@ def link_check(reports, limit=80):
                 continue
             av = s.setdefault("availability", {"status": "unchecked"})
             last = av.get("lastCheckedAt") or "1970-01-01T00:00:00Z"
+            try:
+                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                if NOW - last_dt < timedelta(days=3):
+                    continue
+            except Exception:
+                pass
             cands.append((last, s))
     cands.sort(key=lambda x: x[0])
+    picked = [s for _, s in cands[:limit]]
     checked = flagged = 0
-    for last, s in cands[:limit]:
-        try:
-            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
-            if NOW - last_dt < timedelta(days=3):
-                continue
-        except Exception:
-            pass
-        code = None
-        try:
-            h = session.head(s["url"], timeout=15, allow_redirects=True)
-            code = h.status_code
-            if code in (403, 405, 400, 501):
-                g = session.get(s["url"], timeout=15, allow_redirects=True, stream=True)
-                code = g.status_code
-                g.close()
-        except Exception:
-            code = None
+    ex = ThreadPoolExecutor(max_workers=10)
+    futs = {ex.submit(_probe, s["url"]): s for s in picked}
+    done, _ = fwait(futs, timeout=40)
+    ex.shutdown(wait=False, cancel_futures=True)
+    for fu in done:
+        s, code = futs[fu], fu.result()
         av = s["availability"]
         av["lastCheckedAt"] = NOW_ISO
         av["httpStatus"] = code
@@ -301,7 +319,6 @@ def link_check(reports, limit=80):
         else:
             av.setdefault("status", "unchecked")
             av["reason"] = f"inconclusive ({code or 'no response'}); not flagged"
-        time.sleep(0.3)
     stat("Link check", requests=checked, items=checked, kept=flagged)
     return checked, flagged
 
@@ -405,19 +422,12 @@ def main():
         for s in r.get("sources", []):
             if s.get("url"):
                 known[norm_url(s["url"])] = r["id"]
-    gaz = Gazetteer(os.path.join(STATE, "geocache.json"), nominatim_cap=int(os.environ.get("WNTR_NOMINATIM_CAP", "20")), user_agent=UA)
+    gaz = Gazetteer(os.path.join(STATE, "geocache.json"), nominatim_cap=int(os.environ.get("WNTR_NOMINATIM_CAP", "10")), user_agent=UA)
 
-    raw = []
-    for name, fn in [("Google News", lambda: fetch_google(args.quick)), ("Bing News", fetch_bing), ("Reddit", fetch_reddit),
-                     ("Mastodon", fetch_mastodon), ("Specialist UFO news RSS", fetch_extra_rss), ("GDELT", fetch_gdelt),
-                     ("UFO Meldpunt Nederland", lambda: fetch_meldpunt(known))]:
-        try:
-            got = fn()
-        except Exception as e:  # one broken source never stops the sweep
-            stat(name, failed=1, error=f"crash {type(e).__name__}: {e}")
-            got = []
-        print(f"{name}: {len(got)} raw items", flush=True)
-        raw += got
+    tasks = fetch_tasks(args.quick, known)
+    print(f"Fetching {len(tasks)} source requests with {WORKERS} workers, budget {TIME_BUDGET:.0f}s", flush=True)
+    raw = run_fetch(tasks)
+    print(f"Fetch phase done in {time.time() - T0:.0f}s, {len(raw)} raw items", flush=True)
 
     recent = [r for r in reports if (r.get("sweptAt") or "") >= iso(NOW - timedelta(days=7))[:10]]
     added = merged = skipped_old = dropped = 0
@@ -527,7 +537,8 @@ def main():
         "lastSweep": {"rawItems": len(raw), "added": added, "mergedAsExtraSource": merged, "droppedNotRelevant": dropped,
                       "skippedOlderThan7d": skipped_old, "linksChecked": lc[0], "linksNewlyUnavailable": lc[1]},
         "sourcesStatus": list(status.values()),
-        "schedule": "GitHub Actions cron 11:00 and 23:00 UTC = 4 AM / 4 PM MST (5 AM / 5 PM during MDT)",
+        "schedule": "GitLab pipeline schedules at 4 AM and 4 PM America/Denver" if os.environ.get("GITLAB_CI") else "GitHub Actions cron 11:00 and 23:00 UTC = 4 AM / 4 PM MST (5 AM / 5 PM during MDT)",
+        "sweepSeconds": round(time.time() - T0),
     })
     db = {"meta": meta, "reports": reports, "flapWatch": fw}
     tmp = DATA + ".tmp"
@@ -538,7 +549,7 @@ def main():
         f.write(json.dumps({"at": NOW_ISO, **meta["lastSweep"], "sources": {k: {x: v[x] for x in ("requests", "ok", "failed", "items", "kept")} for k, v in status.items()}}) + "\n")
     print(json.dumps(meta["lastSweep"], indent=1))
     for s in status.values():
-        print(f"  {s['name']}: requests {s['requests']} ok {s['ok']} failed {s['failed']} items {s['items']} kept {s['kept']}")
+        print(f"  {s['name']}: requests {s['requests']} ok {s['ok']} failed {s['failed']} skipped {s.get('skipped', 0)} items {s['items']} kept {s['kept']}")
 
 if __name__ == "__main__":
     main()

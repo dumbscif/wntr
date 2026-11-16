@@ -94,4 +94,3 @@ EXTRA_RSS = [
     ("Liberation Times", "https://www.liberationtimes.com/home?format=rss"),
 ]
 MELDPUNT_HOME = "https://www.ufomeldpunt.nl/"
-GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc?query=(UFO%20OR%20UAP)%20(sighting%20OR%20spotted)&mode=artlist&format=json&maxrecords=75&timespan=3d"

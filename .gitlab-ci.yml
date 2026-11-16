@@ -1,0 +1,40 @@
+# UFO Sighting Archive: WNTR - free GitLab version (no AI, no keys).
+# Sweeps run from a pipeline schedule (set to 4 AM and 4 PM America/Denver),
+# or by clicking "Run pipeline". Each run picks up the previous archive from the
+# live Pages site, so nothing has to be committed back to the repo.
+pages:
+  image: python:3.12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  timeout: 45 minutes
+  script:
+    - pip install -q -r requirements.txt
+    - |
+      python - <<'PY'
+      import os, urllib.request
+      base = os.environ.get("CI_PAGES_URL", "").rstrip("/")
+      targets = {"data/events.json": "docs/data/events.json",
+                 "_state/geocache.json": "state/geocache.json",
+                 "_state/sweep-log.jsonl": "state/sweep-log.jsonl"}
+      for rel, dest in targets.items():
+          if not base:
+              break
+          try:
+              req = urllib.request.Request(f"{base}/{rel}", headers={"User-Agent": "wntr-sweep"})
+              body = urllib.request.urlopen(req, timeout=60).read()
+              if rel.endswith("events.json") and len(body) < 1000:
+                  continue
+              os.makedirs(os.path.dirname(dest), exist_ok=True)
+              open(dest, "wb").write(body)
+              print("restored", rel, len(body), "bytes")
+          except Exception as e:
+              print("no previous", rel, "-", e, "(using copy in repo)")
+      PY
+    - python scraper/sweep.py
+    - rm -rf public && cp -r docs public && mkdir -p public/_state && cp state/* public/_state/
+  artifacts:
+    paths:
+      - public
+    expire_in: never

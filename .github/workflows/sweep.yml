@@ -1,0 +1,59 @@
+name: Sweep and publish
+
+on:
+  schedule:
+    # 11:00 UTC = 4 AM MST, 23:00 UTC = 4 PM MST.
+    # GitHub cron is UTC only, so during daylight time (MDT, Mar-Nov) these run at 5 AM / 5 PM.
+    - cron: "0 11 * * *"
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}   # "Run workflow" button = manual sweep
+
+permissions:
+  contents: write   # commit updated data
+  pages: write      # publish the site
+  id-token: write   # required by deploy-pages
+
+concurrency:
+  group: wntr-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Sweep public sources (no AI, no keys)
+        run: python scraper/sweep.py
+      - name: Commit updated archive
+        run: |
+          git config user.name "wntr-sweep-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data state
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Sweep $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git pull --rebase --autostash
+            git push
+          fi
+      - name: Package site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: sweep
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

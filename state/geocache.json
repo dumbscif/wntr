@@ -1,0 +1,22 @@
+{
+"nom:alaska": null,
+"nom:alaska, us": null,
+"nom:antarctica": null,
+"nom:argentina": null,
+"nom:britain": null,
+"nom:england": null,
+"nom:guatemala": null,
+"nom:iraq": null,
+"nom:lakenheath": {
+"cc": "GB",
+"continent": "EU",
+"country": "United Kingdom",
+"gid": null,
+"lat": 52.4176,
+"lon": 0.518,
+"place": "Lakenheath, West Suffolk, Suffolk, England, United Kingdom",
+"precision": "approximate; OpenStreetMap Nominatim lookup of 'Lakenheath'; not an object position",
+"tz": null
+},
+"nom:south america": null
+}

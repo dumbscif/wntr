@@ -1,0 +1,120 @@
+# UFO Sighting Archive: WNTR — free public web app
+
+A free website anyone can open (no sign-in, no payment) that shows a worldwide, sourced archive of UFO/UAP sighting reports.
+It updates itself twice a day on GitHub's free servers. **It uses no AI and no Grok usage.** A small Python program
+reads public news and report feeds, keeps sighting reports, finds the place on a map, and publishes the site.
+
+- **Map**: glowing dots for reports first found in the last 24 hours (red = civilian/unknown, blue = alleged testing,
+  yellow = article says officials/military/police confirmed or identified something, hollow cyan = OSINT/context).
+- **Latest**: everything found in the last 24 hours, including items with no location (never given made-up coordinates).
+- **Archive**: every report ever found, permanent, with search and filters.
+- **Flap Watch**: flags a cluster only when 3+ separate reports from 3+ different source sites fall within 150 km and
+  72 hours. Otherwise it says "No confirmed flap".
+- **Sources & About**: which feeds worked in the last sweep, the rules, and the limits.
+
+Every entry links to its source. Old links are re-checked and marked "no longer available" if the page returns 404/410.
+
+---
+
+## What you need to do (about 15 minutes, one time)
+
+You only need a web browser. Everything is free.
+
+### 1. Make a free GitHub account
+1. Go to https://github.com/signup
+2. Enter an email, a password and a username. (Your username becomes part of the website address.)
+3. Verify your email when GitHub sends you a code.
+
+### 2. Create a public repository (a folder for the app)
+1. Sign in, then click the **+** at the top right and pick **New repository**.
+2. **Repository name**: `wntr` (or anything you like, no spaces).
+3. Choose **Public**. (Public is required for free automatic updates and the free website.)
+4. Tick **Add a README file**, then click **Create repository**.
+
+### 3. Upload the app files
+1. On your computer, unzip `wntr-app.zip`. You get a folder called `wntr-app`.
+2. In your new repository on GitHub, click **Add file → Upload files**.
+3. Open the `wntr-app` folder, select **everything inside it** (not the folder itself) and drag it into the GitHub page.
+   - Hidden folder warning: the `.github` folder holds the automatic schedule. On a Mac press **Cmd+Shift+.** in Finder
+     to show hidden files; on Windows choose **View → Show → Hidden items**. Make sure `.github` is included.
+   - If drag-and-drop skips `.github`, see "If the .github folder didn't upload" below.
+4. Scroll down and click **Commit changes**. Wait until the upload finishes.
+
+### 4. Turn on the website (GitHub Pages)
+1. In the repository, click **Settings** (top menu) → **Pages** (left menu).
+2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+   (That's all on this page; there's nothing to save.)
+
+### 5. Turn on the automatic sweeps (GitHub Actions)
+1. Click the **Actions** tab at the top of the repository.
+2. If you see a green button like **"I understand my workflows, go ahead and enable them"**, click it.
+3. On the left click **Sweep and publish**. If there's a banner saying scheduled workflows are disabled, click **Enable workflow**.
+
+### 6. Run the first sweep by hand
+1. Still in **Actions → Sweep and publish**, click **Run workflow** (right side) → **Run workflow**.
+2. Wait 10–15 minutes. A yellow dot means running; a green tick means done.
+3. You can run a manual sweep like this any time.
+
+### 7. Find your public website address
+- Go to **Settings → Pages**. At the top it says **"Your site is live at …"**.
+- It looks like `https://YOUR-USERNAME.github.io/wntr/`.
+
+### 8. Share it
+- Send that address to anyone. They don't need a GitHub account, an app, or any payment.
+- On a phone, open the address and use **Share → Add to Home Screen** to get an app-like icon.
+
+From now on GitHub runs the sweep automatically every day at **4 AM and 4 PM MST** (11:00 and 23:00 UTC).
+GitHub's schedule uses UTC, so while daylight saving time is on (March–November, MDT) the runs land at **5 AM and 5 PM**.
+GitHub can start scheduled runs a few minutes to an hour late when its servers are busy.
+
+---
+
+## If something goes wrong
+
+- **If the .github folder didn't upload:** in the repository click **Add file → Create new file**, type
+  `.github/workflows/sweep.yml` as the name (typing the `/` makes folders), open `sweep.yml` from the zip in a text
+  editor, copy everything, paste it in, and click **Commit changes**.
+- **The run has a red X:** click the run, then the failed step to see the message. A failure in the **deploy** step
+  usually means Pages isn't set to **GitHub Actions** (step 4). Fix it and click **Re-run all jobs**.
+- **The site shows "Could not load data/events.json":** wait a minute and refresh; the first publish can lag.
+- **Automatic runs stopped:** GitHub pauses schedules in public repos after 60 days without activity. The sweep's own
+  data commits normally count as activity, but if you ever see a "disabled" banner in Actions, click **Enable workflow**.
+- **Want a different time?** Edit `.github/workflows/sweep.yml` and change the two `cron:` lines (UTC times).
+
+## Costs and limits
+
+- GitHub Actions and Pages are free for public repositories. One sweep takes roughly 8–12 minutes.
+- No API keys or accounts are needed besides your GitHub account.
+- Keyword rules aren't perfect: some items will be off-topic, some places wrong or only approximate (a town or a
+  state/region centre). Nothing is verified. Read the linked source.
+- Some sites block automated reading from cloud servers (NUFORC, Reddit JSON; Reddit RSS and GDELT are sometimes rate
+  limited). The sweep keeps going when a source fails and shows it in **Sources & About**.
+- Google News links open through a Google redirect to the publisher's page.
+
+---
+
+## For technical readers
+
+```
+.github/workflows/sweep.yml   cron 0 11 * * * and 0 23 * * * + workflow_dispatch; commits data; deploys docs/ to Pages
+scraper/sweep.py              fetch → filter → geocode → classify → dedupe → link check → Flap Watch → docs/data/events.json
+scraper/sources.py            every feed: Google News (60 editions, ~120 queries), Bing News (16 markets), Reddit RSS,
+                              Mastodon tags, Open Minds + Liberation Times RSS, GDELT, UFO Meldpunt Nederland
+scraper/classify.py           multilingual keyword rules for relevance and marker colour
+scraper/geo.py                offline GeoNames gazetteer (cities5000 + admin1), native-script names, optional Nominatim
+                              fallback (≤20 lookups/run, 1 req/s, cached in state/geocache.json; WNTR_NO_NOMINATIM=1 disables)
+scraper/import_seed.py        one-time import of the hand-reviewed Nov 2026 archive
+scraper/build_gazetteer.py    rebuilds gazetteer.tsv / admin1.tsv / countries.tsv from GeoNames
+docs/                         static site (index.html, app.js, style.css, Leaflet + CARTO dark tiles from CDN)
+docs/data/events.json         the archive the site loads (relative path)
+state/                        geocoder cache and sweep log
+```
+
+Run locally: `pip install -r requirements.txt && python scraper/sweep.py` then
+`python -m http.server -d docs 8000` and open http://localhost:8000.
+Options: `--quick` (fewer Google queries) and `--no-linkcheck`. `WNTR_NOMINATIM_CAP=0` turns off online geocoding.
+
+Alternative hosting: Settings → Pages → **Deploy from a branch** → `main` / `/docs` also works (the site is plain
+static files); then you can delete the `deploy` job from the workflow.
+
+Code: MIT. Place data: GeoNames, CC BY 4.0. Linked articles belong to their publishers.

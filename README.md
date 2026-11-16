@@ -16,7 +16,25 @@ Every entry links to its source. Old links are re-checked and marked "no longer 
 
 ---
 
-## What you need to do (about 15 minutes, one time)
+## Running on GitLab (current live version)
+
+**Live site:** https://wntr-e6040b.gitlab.io  ·  **Project:** https://gitlab.com/ProjectStarFire/wntr
+
+- **Schedules:** two pipeline schedules run a sweep at **4 AM and 4 PM America/Denver** every day
+  (Build > Pipeline schedules). Each run restores the previous archive from the live site, sweeps, and republishes.
+- **Manual sweep:** Build > Pipelines > **New pipeline** > **New pipeline** (branch `main`). It takes about 2 minutes.
+- **Free-plan limit:** GitLab gives **400 compute minutes a month**. Each sweep is time-boxed (`WNTR_TIME_BUDGET=180`
+  seconds for fetching) and pip is cached, so a whole run takes about 1.5–2.5 minutes. Twice a day is roughly
+  100–150 minutes a month, which leaves room for manual sweeps. Hourly sweeps would not fit (~1,500+ minutes).
+  Check usage under your avatar > Edit profile > Usage quotas.
+- Pages visibility must stay **Everyone** (Settings > General > Visibility > Pages) so anyone can open the site.
+- Every push to `main` also runs a sweep; put `[skip ci]` in the commit message to avoid using minutes.
+
+The GitHub instructions below still work if you ever move the app to GitHub.
+
+---
+
+## What you need to do on GitHub (about 15 minutes, one time)
 
 You only need a web browser. Everything is free.
 
@@ -83,11 +101,11 @@ GitHub can start scheduled runs a few minutes to an hour late when its servers a
 
 ## Costs and limits
 
-- GitHub Actions and Pages are free for public repositories. One sweep takes roughly 8–12 minutes.
+- GitHub Actions and Pages are free for public repositories. One sweep takes roughly 1.5–3 minutes (fetching is concurrent and capped at 180 seconds).
 - No API keys or accounts are needed besides your GitHub account.
 - Keyword rules aren't perfect: some items will be off-topic, some places wrong or only approximate (a town or a
   state/region centre). Nothing is verified. Read the linked source.
-- Some sites block automated reading from cloud servers (NUFORC, Reddit JSON; Reddit RSS and GDELT are sometimes rate
+- Some sites block automated reading from cloud servers (NUFORC, Reddit JSON; Reddit RSS is often rate
   limited). The sweep keeps going when a source fails and shows it in **Sources & About**.
 - Google News links open through a Google redirect to the publisher's page.
 
@@ -97,17 +115,20 @@ GitHub can start scheduled runs a few minutes to an hour late when its servers a
 
 ```
 .github/workflows/sweep.yml   cron 0 11 * * * and 0 23 * * * + workflow_dispatch; commits data; deploys docs/ to Pages
-scraper/sweep.py              fetch → filter → geocode → classify → dedupe → link check → Flap Watch → docs/data/events.json
+scraper/sweep.py              concurrent fetch (16 workers, 10 s timeouts, WNTR_TIME_BUDGET=180 s; skipped sources logged)
+                              → filter → geocode → classify → dedupe → link check → Flap Watch → docs/data/events.json
 scraper/sources.py            every feed: Google News (60 editions, ~120 queries), Bing News (16 markets), Reddit RSS,
-                              Mastodon tags, Open Minds + Liberation Times RSS, GDELT, UFO Meldpunt Nederland
+                              Mastodon tags, Open Minds + Liberation Times RSS, UFO Meldpunt Nederland
 scraper/classify.py           multilingual keyword rules for relevance and marker colour
 scraper/geo.py                offline GeoNames gazetteer (cities5000 + admin1), native-script names, optional Nominatim
-                              fallback (≤20 lookups/run, 1 req/s, cached in state/geocache.json; WNTR_NO_NOMINATIM=1 disables)
+                              fallback (≤10 lookups/run, 1 req/s, cached in state/geocache.json; WNTR_NO_NOMINATIM=1 disables)
 scraper/import_seed.py        one-time import of the hand-reviewed Nov 2026 archive
 scraper/build_gazetteer.py    rebuilds gazetteer.tsv / admin1.tsv / countries.tsv from GeoNames
 docs/                         static site (index.html, app.js, style.css, Leaflet + CARTO dark tiles from CDN)
 docs/data/events.json         the archive the site loads (relative path)
 state/                        geocoder cache and sweep log
+.gitlab-ci.yml                GitLab 'pages' job: pip cache, restore archive from live site, sweep, publish public/
+                              (link checks capped at 25/run, WNTR_LINKCHECK_CAP)
 ```
 
 Run locally: `pip install -r requirements.txt && python scraper/sweep.py` then

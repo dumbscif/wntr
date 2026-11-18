@@ -124,7 +124,9 @@ scraper/geo.py                offline GeoNames gazetteer (cities5000 + admin1), 
                               fallback (≤10 lookups/run, 1 req/s, cached in state/geocache.json; WNTR_NO_NOMINATIM=1 disables)
 scraper/import_seed.py        one-time import of the hand-reviewed Nov 2026 archive
 scraper/build_gazetteer.py    rebuilds gazetteer.tsv / admin1.tsv / countries.tsv from GeoNames
-docs/                         static site styled after the original Grok Page: index.html, app.js, style.css, land.js (SVG world map, no CDN)
+docs/                         static site styled after the original Grok Page: index.html, app.js, style.css,
+                              livemap.js (zoomable satellite/dark/street/terrain map), vendor/ (Leaflet 1.9.4 +
+                              Leaflet.markercluster 1.5.3, bundled; BSD-2 / MIT), land.js (offline SVG fallback map)
 docs/data/events.json         the archive the site loads (relative path)
 state/                        geocoder cache and sweep log
 .gitlab-ci.yml                GitLab 'pages' job: pip cache, restore archive from live site, sweep, publish public/
@@ -139,3 +141,9 @@ Alternative hosting: Settings → Pages → **Deploy from a branch** → `main` 
 static files); then you can delete the `deploy` job from the workflow.
 
 Code: MIT. Place data: GeoNames, CC BY 4.0. Linked articles belong to their publishers.
+
+## Map tiles
+
+The Map tab uses free, keyless tile servers: Esri World Imagery with Esri's boundaries-and-places labels (default
+"Satellite (Earth view)"), CARTO dark_all ("Dark map"), Esri World Street Map and Esri World Topo Map. Attribution is
+shown on the map. If Leaflet cannot load, the page falls back to the built-in SVG outline map.

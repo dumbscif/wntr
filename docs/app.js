@@ -15,7 +15,7 @@
     tab: "map", layers: { red: true, blue: true, yellow: true, context: true }, view: "overview", focusId: "", selectedId: "", detailId: "",
     globalQuery: "", globalOpen: false, latestLimit: 12, query: "", reporterFilter: "all", markerFilter: "all", countryFilter: "all",
     continentFilter: "all", sortOrder: "newest", regionQuery: "", dateMode: "swept", fromDate: "", toDate: "", onlyMedia: false,
-    expandReports: false, shapeFolder: "all", contextQuery: "", showOsint: true, archiveLimit: 400
+    expandReports: false, shapeFolder: "all", contextQuery: "", showOsint: true, archiveLimit: 400, mapNonce: 0
   };
   var openDetails = {}; // remembers which <details> the reader opened, across re-renders
 
@@ -139,7 +139,25 @@
   // ------------------------------------------------------------------ map
   function project(lon, lat) { return { x: ((lon + 180) / 360) * 1000, y: ((90 - lat) / 180) * 500 }; }
   function dotRadius(c) { return 5 + Math.min(c, 6) * 2.2; }
+  var pendingMap = null;
+  function popupHtml(x, isReport) {
+    var c = isReport ? markerColor(x.marker) : CYAN;
+    return '<div class="lm-pop"><div class="lm-pop-k"><span class="lm-pop-dot" style="' + (isReport ? "background:" + c + ";box-shadow:0 0 8px " + c : "border:2px solid " + c) + '"></span>' + esc(isReport ? reporterLabel(x) : "Context only · not a sighting") + "</div>" +
+      "<strong>" + esc(isReport ? x.label : x.title) + "</strong>" +
+      (isReport ? "<div>" + esc(sightingLabel(x)) + "</div><div>" + esc(shortShape(x.shape)) + (x.media.length ? " · " + x.media.length + " media" : "") + (x.historical ? " · HISTORICAL" : "") + "</div>" : "<div>" + esc(x.date || "Activity date not reported") + "</div>") +
+      "<div>First swept " + esc(formatDenver(x.sweptAt)) + " · " + x.sources.length + " source" + (x.sources.length === 1 ? "" : "s") + "</div>" +
+      '<div class="lm-pop-p">' + esc(x.precision || "") + "</div>" +
+      '<button type="button" class="lm-open" data-open="' + esc(x.id) + '">Open full record &amp; sources</button></div>';
+  }
   function worldMap(events, contexts, focus, mode, selectedId) {
+    if (window.WNTRLiveMap) {
+      var items = events.map(function (e) { return { id: e.id, lat: e.lat, lon: e.lon, kind: e.marker === "yellow" || e.marker === "blue" ? e.marker : "red", color: markerColor(e.marker), count: e.count, title: e.label + " · " + reporterLabel(e), popup: popupHtml(e, true) }; })
+        .concat(contexts.map(function (o) { return { id: o.id, lat: o.lat, lon: o.lon, kind: "context", color: CYAN, count: 1, title: "Context only: " + o.title, popup: popupHtml(o, false) }; }));
+      pendingMap = { items: items, selectedId: selectedId, mode: mode, focus: mode === "location" && focus ? { id: focus.id, lat: focus.lat, lon: focus.lon } : null,
+        fitKey: mode + "|" + (mode === "location" && focus ? focus.id : "") + "|" + S.layers.red + S.layers.blue + S.layers.yellow + S.layers.context + "|" + S.mapNonce, onOpen: openRecord };
+      return '<div class="map-wrap live"><div id="map-slot" class="map-slot"></div></div>' +
+        '<p class="muted map-hint">Drag to pan · scroll, pinch or use +/− to zoom · ⤢ fits all markers · layer button (top right) switches Satellite, Dark, Streets and Terrain. Nearby markers group into numbered bubbles; click one to zoom in or spread them out.</p>';
+    }
     var vb = "0 0 1000 500";
     if (mode === "location" && focus) { var p = project(focus.lon, focus.lat); vb = (p.x - 80) + " " + (p.y - 45) + " 160 90"; }
     var land = '<path d="' + (window.WNTR_WORLD_BASE || "") + '" fill="var(--land)" stroke="var(--b-subtle)" stroke-width="0.4"/>' +
@@ -364,9 +382,12 @@
     var active = document.activeElement, activeId = active && active.id, selStart = null, selEnd = null;
     if (active && active.tagName === "INPUT") { try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (err) { } }
     Array.prototype.forEach.call(app.querySelectorAll("details[data-key]"), function (d) { openDetails[d.dataset.key] = d.open; });
+    pendingMap = null;
     var panel = S.tab === "map" ? mapTab() : S.tab === "latest" ? latestTab() : S.tab === "archive" ? archiveTab() : S.tab === "insights" ? insightsTab() : healthTab();
     app.innerHTML = header() + panel + (S.detailId ? section("watch-detail-panel", "Record details · inline reader", drawer(S.detailId)) : "") +
       '<footer class="foot">Reports are claims, not verified events. Every entry links to its source. Built automatically by an open-source sweep with no AI.</footer>';
+    var slot = document.getElementById("map-slot");
+    if (slot && pendingMap && window.WNTRLiveMap) window.WNTRLiveMap.attach(slot, pendingMap);
     if (opts.focusClose) { var c = document.getElementById("close-record"); if (c) { c.focus({ preventScroll: true }); c.scrollIntoView({ block: "center" }); } }
     else if (opts.focusTab) { var t = document.getElementById("watch-tab-" + S.tab); if (t) t.focus(); }
     else if (activeId) { var el = document.getElementById(activeId); if (el) { el.focus({ preventScroll: true }); if (selStart !== null && el.setSelectionRange) { try { el.setSelectionRange(selStart, selEnd); } catch (err) { } } } }
@@ -382,13 +403,13 @@
     if (a === "tab") { S.tab = arg; render({ focusTab: t.getAttribute("role") === "tab" }); if (t.getAttribute("role") !== "tab") window.scrollTo(0, 0); return; }
     if (a === "seg") { var k = t.getAttribute("data-key"); S[k] = arg; if (k === "continentFilter") S.countryFilter = "all"; render(); return; }
     if (a === "toggle") { if (arg.indexOf("layer:") === 0) { var L = arg.slice(6); S.layers[L] = !S.layers[L]; } else S[arg] = !S[arg]; render(); return; }
-    if (a === "resetMap") { S.layers = { red: true, blue: true, yellow: true, context: true }; S.view = "overview"; S.focusId = ""; render(); return; }
+    if (a === "resetMap") { S.layers = { red: true, blue: true, yellow: true, context: true }; S.view = "overview"; S.focusId = ""; S.mapNonce++; render(); return; }
     if (a === "more") { S.latestLimit += 12; render(); return; }
     if (a === "resetDb") { resetDb(); render(); return; }
     if (a === "shapeFolder") { S.shapeFolder = arg; S.tab = "archive"; render(); window.scrollTo(0, 0); return; }
     if (a === "openSelected") { openRecord(S.selectedId); return; }
     if (a === "close") { var back = S.detailId; S.detailId = ""; render(); var b = app.querySelector('[data-open="' + (window.CSS && CSS.escape ? CSS.escape(back) : back) + '"]'); if (b) b.focus(); return; }
-    if (a === "locate") { var x = findAny(arg); if (x && x.marker && REPORTS.indexOf(x) >= 0) S.layers[x.marker] = true; else S.layers.context = true; S.focusId = arg; S.view = "location"; S.tab = "map"; S.detailId = ""; render(); window.scrollTo(0, 0); return; }
+    if (a === "locate") { var x = findAny(arg); if (x && x.marker && REPORTS.indexOf(x) >= 0) S.layers[x.marker] = true; else S.layers.context = true; S.focusId = arg; S.view = "location"; S.tab = "map"; S.mapNonce++; S.detailId = ""; render(); window.scrollTo(0, 0); return; }
   });
   app.addEventListener("keydown", function (ev) {
     var t = ev.target;

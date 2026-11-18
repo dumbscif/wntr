@@ -13,7 +13,7 @@ import json, math, os, re, time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-SKY_VERSION = 1
+SKY_VERSION = 2  # v2: Starlink train only from the latest launches; wording fixes
 DENVER = ZoneInfo("America/Denver")
 UA = "WNTR-UFO-Archive/1.0 (public sighting archive; Sky Check)"
 TLE_MAX_AGE_H = 10          # re-download CelesTrak sets at most every 10 h (CelesTrak asks for <= every 2 h)
@@ -136,31 +136,43 @@ class Sky:
         return self.eph
 
     def load_sats(self, group):
+        """CelesTrak OMM (CSV) orbit data plus SATCAT launch dates.
+        CSV, not TLE: TLE cannot carry 6-digit catalog numbers, so the newest satellites would be missing."""
         if group in self.sats:
             return self.sats[group]
+        import csv
         from sgp4.api import Satrec, SatrecArray
+        from sgp4 import omm
         import numpy as np
-        p = self._cached(f"tle-{group}.txt", f"https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=tle", TLE_MAX_AGE_H,
-                         lambda b: b.count(b"\n1 ") > 10)
+        p = self._cached(f"gp-{group}.csv", f"https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=csv", TLE_MAX_AGE_H,
+                         lambda b: b.startswith(b"OBJECT_NAME") and b.count(b"\n") > 10)
+        sc = self._cached(f"satcat-{group}.csv", f"https://celestrak.org/satcat/records.php?GROUP={group}&FORMAT=csv", TLE_MAX_AGE_H,
+                          lambda b: b.startswith(b"OBJECT_NAME") and b.count(b"\n") > 10)
         if not p:
             self.sats[group] = None
             return None
-        lines = [l.rstrip() for l in open(p, encoding="utf-8", errors="replace") if l.strip()]
-        names, sats, intl, mm, epochs = [], [], [], [], []
-        for i in range(0, len(lines) - 2, 3):
-            n, l1, l2 = lines[i], lines[i + 1], lines[i + 2]
-            if not (l1.startswith("1 ") and l2.startswith("2 ")):
-                continue
-            try:
-                s = Satrec.twoline2rv(l1, l2)
-            except Exception:
-                continue
-            names.append(n.strip()); sats.append(s); intl.append(l1[9:14].strip()); mm.append(float(l2[52:63])); epochs.append(s.jdsatepoch + s.jdsatepochF)
+        launched = {}
+        if sc:
+            with open(sc, encoding="utf-8", errors="replace") as f:
+                for row in csv.DictReader(f):
+                    launched[row.get("NORAD_CAT_ID", "")] = row.get("LAUNCH_DATE") or ""
+        names, sats, intl, mm, epochs, ldate = [], [], [], [], [], []
+        with open(p, encoding="utf-8", errors="replace") as f:
+            for fields in omm.parse_csv(f):
+                try:
+                    sat = Satrec(); omm.initialize(sat, fields)
+                except Exception:
+                    continue
+                oid = fields.get("OBJECT_ID", "")
+                names.append(fields.get("OBJECT_NAME", "").strip()); sats.append(sat)
+                intl.append(oid[:8]); mm.append(float(fields.get("MEAN_MOTION") or 0)); epochs.append(sat.jdsatepoch + sat.jdsatepochF)
+                # launch date: SATCAT, else the designator year (Jan 1) as a safe lower bound is NOT used; unknown stays ""
+                ldate.append(launched.get(str(fields.get("NORAD_CAT_ID", "")).strip(), ""))
         if not sats:
             self.sats[group] = None
             return None
-        data = {"names": names, "arr": SatrecArray(sats), "intl": intl, "mm": np.array(mm), "epoch_jd": float(np.median(epochs)),
-                "fetched": datetime.fromtimestamp(os.path.getmtime(p), timezone.utc)}
+        data = {"names": names, "arr": SatrecArray(sats), "intl": intl, "mm": np.array(mm), "launch": ldate,
+                "epoch_jd": float(np.median(epochs)), "fetched": datetime.fromtimestamp(os.path.getmtime(p), timezone.utc)}
         self.sats[group] = data
         return data
 
@@ -213,7 +225,7 @@ def _sun_moon_planets(sky, dt, lat, lon):
         return a[0].degrees, a[1].degrees
     sun_alt, sun_az = altaz("sun")
     if sun_alt > -0.833: sky_state = "daylight"
-    elif sun_alt > -6: sky_state = "civil twilight (bright dusk/dawn)"
+    elif sun_alt > -6: sky_state = "civil twilight, bright dusk/dawn"
     elif sun_alt > -12: sky_state = "nautical twilight"
     elif sun_alt > -18: sky_state = "astronomical twilight"
     else: sky_state = "full dark"
@@ -301,7 +313,9 @@ def _sat_check(sky, dt, lat, lon, approx, group, label):
     proj = np.einsum("stk,tk->st", r, sh)
     perp = np.linalg.norm(r - proj[..., None] * sh[None, :, :], axis=2)
     sunlit = ~((proj < 0) & (perp < 6371.0))
-    vis = (alt >= 10) & sunlit & (err == 0)
+    day = dt.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    existed = np.array([not (l and l >= day) and not (not l and k[:4] >= dt.strftime("%Y")) for l, k in zip(data["launch"], data["intl"])])
+    vis = (alt >= 10) & sunlit & (err == 0) & existed[:, None]
     idx = np.where(vis.any(axis=1))[0]
     span = f"±{win} min"
     if not len(idx):
@@ -323,15 +337,17 @@ def _sat_check(sky, dt, lat, lon, approx, group, label):
     groups = {}
     for i in idx:
         groups.setdefault(data["intl"][i], []).append(i)
-    train = max(groups.values(), key=len)
-    low = [i for i in train if data["mm"][i] > 15.4]            # still low = recently launched, raising orbit
+    # A train needs a launch from the 14 days before the sighting (SATCAT launch date).
+    lo_day = (dt - timedelta(days=14)).astimezone(timezone.utc).strftime("%Y-%m-%d")
+    fresh_groups = [v for k, v in groups.items() if data["launch"][v[0]] and lo_day <= data["launch"][v[0]] < day]
+    train = max(fresh_groups, key=len) if fresh_groups else []
+    low = train
     now_n = int(vis[:, win].sum())
     msg = (f"At the reported time {now_n} Starlink satellite{'' if now_n == 1 else 's'} {'was' if now_n == 1 else 'were'} sunlit above 10° (most are faint; they are brightest soon after dusk or before dawn). "
            f"Highest in the ±{win} min window: {alt[best, j]:.0f}° in the {compass(az[best, j])} at {denver(times[j], False)}.")
     out["flag"] = False
     if len(low) >= 4:
-        yr = "20" + data["intl"][train[0]][:2]
-        msg += f" {len(low)} visible satellites are from one recent launch ({yr}-{data['intl'][train[0]][2:]}) still at low altitude: a 'string of lights' Starlink train is possible."
+        msg += f" {len(low)} satellites from one launch on {data['launch'][train[0]]} ({data['intl'][train[0]]}) were visible within the ±{win} min window: a 'string of lights' Starlink train is possible."
         out["flag"] = True
     out["result"] = msg
     return out

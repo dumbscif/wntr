@@ -22,7 +22,7 @@ pages:
     - key: pip-py312-v2
       paths:
         - .cache/pip
-    # Sky Check data: JPL ephemeris (17 MB, downloaded once), CelesTrak TLEs and Launch Library 2 results
+    # Sky Check data: JPL ephemeris (17 MB, downloaded once), CelesTrak orbit data + SATCAT and Launch Library 2 results
     # (re-downloaded at most every ~10-12 h by the script itself)
     - key: sky-data-v1
       paths:

@@ -106,7 +106,7 @@ GitHub can start scheduled runs a few minutes to an hour late when its servers a
   or separate reports stated · 2 first-hand witness (own report or named witness) · 1 single anonymous/second-hand claim.
   Then one step down for each missing basic: second-hand account with the original not opened, no sighting date, no
   location (never below 1). It grades documentation, not what the object was. Filter by grade on the Map and Archive tabs.
-- **Sky Check** (for reports with a recorded time and place): Starlink and bright satellites/ISS (CelesTrak TLEs + SGP4,
+- **Sky Check** (for reports with a recorded time and place): Starlink and bright satellites/ISS (CelesTrak orbit data (OMM CSV, so new 6-digit catalog numbers are included) + SATCAT launch dates + SGP4,
   only within 14 days of the orbit data and only for precise locations), rocket launches within 1,600 km from 3 h before
   to 1 h after (Launch Library 2), Sun/Moon/bright planets (JPL DE421 via skyfield) and major meteor showers. Not checked:
   aircraft, re-entries, weather, balloons, drones. Results are possible explanations, not verdicts. Computed once per

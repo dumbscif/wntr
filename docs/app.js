@@ -1,4 +1,4 @@
-/* UFO Sighting Archive: WNTR - static port of the original Grok Page ("Dashboard v4").
+/* WNTR:\\Project StarFire UFO Sighting Tracker - static port of the original Grok Page ("Dashboard v4").
    Normal document flow only: no sticky/fixed headers, floating panels or overlay readers.
    Data: data/events.json (written by scraper/sweep.py). No framework, no build step. */
 (function () {
@@ -209,7 +209,7 @@
     var shown = results.slice(0, 60);
     var resHtml = gq ? (shown.length ? '<div id="watch-global-results" role="region" aria-label="' + results.length + ' matching records" style="margin-top:12px;display:grid;gap:4px">' + shown.map(function (r) { return '<button type="button" class="control result-btn" data-open="' + esc(r.id) + '"><span>' + esc(r.kind + " · " + r.group) + "</span><br>" + esc(r.label) + "</button>"; }).join("") + (results.length > shown.length ? '<p class="muted">' + (results.length - shown.length) + " more matches · refine the search</p>" : "") + "</div>" : '<p class="muted" style="margin-top:8px">No matching records.</p>') : "";
     return '<header id="watch-dashboard-header" class="watch-header">' +
-      '<div class="row g8"><strong class="hdr-title">UFO Sighting Archive: WNTR</strong><span class="hdr-checked">Checked ' + esc(formatDenver(LAST)) + '</span><span class="chip">' + rc + " last 24h · " + REPORTS.length + ' total</span><span class="chip" role="status">No confirmed flap</span></div>' +
+      '<div class="row g8"><strong class="hdr-title">WNTR:\\\\Project StarFire UFO Sighting Tracker</strong><span class="hdr-checked">Checked ' + esc(formatDenver(LAST)) + '</span><span class="chip">' + rc + " last 24h · " + REPORTS.length + ' total</span><span class="chip" role="status">No confirmed flap</span></div>' +
       '<div class="watch-tabs" role="tablist" aria-label="Dashboard views">' + TABS.map(function (t) { return '<button type="button" class="control tab-btn" role="tab" id="watch-tab-' + t.id + '" aria-selected="' + (S.tab === t.id) + '" aria-controls="watch-panel-' + t.id + '" tabindex="' + (S.tab === t.id ? 0 : -1) + '" data-action="tab" data-arg="' + t.id + '">' + esc(t.label) + "</button>"; }).join("") + "</div>" +
       det("global", "Find a report or context", '<label for="in-globalQuery" style="display:block;margin:8px 0">Search all locations, narratives and sources</label><input id="in-globalQuery" class="search" type="search" data-input="globalQuery" value="' + esc(S.globalQuery) + '" placeholder="Place, shape, source or ID"><div id="global-results">' + resHtml + "</div>") +
       "</header>";

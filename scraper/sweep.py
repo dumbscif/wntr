@@ -527,7 +527,7 @@ def main():
     last24 = [r for r in reports if ts(r) >= window_start]
     meta = db.get("meta", {})
     meta.update({
-        "title": "UFO Sighting Archive: WNTR",
+        "title": "WNTR:\\\\Project StarFire UFO Sighting Tracker",
         "generatedBy": "scraper/sweep.py (rule-based, no AI)",
         "lastSweepAt": NOW_ISO,
         "sweepCount": int(meta.get("sweepCount", 0)) + 1,

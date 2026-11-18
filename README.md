@@ -1,4 +1,4 @@
-# UFO Sighting Archive: WNTR — free public web app
+# WNTR:\\\\Project StarFire UFO Sighting Tracker — free public web app
 
 A free website anyone can open (no sign-in, no payment) that shows a worldwide, sourced archive of UFO/UAP sighting reports.
 It updates itself twice a day on GitHub's free servers. **It uses no AI and no Grok usage.** A small Python program

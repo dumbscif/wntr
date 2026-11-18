@@ -510,13 +510,9 @@ def log_excluded(ex, it, url, pub, a, record=None):
     ex["items"].insert(0, e)
 
 def save_excluded(ex):
-    seen, uniq = set(), []
-    for e in ex["items"]:   # newest first; one entry per URL
-        k = norm_url(e.get("url") or "") or e.get("title")
-        if k in seen:
-            continue
-        seen.add(k); uniq.append(e)
-    ex["items"] = uniq[:EXCLUDED_CAP]
+    # Distinct report ids always stay (shared listing-page URLs must not collapse
+    # separate sightings). Id-less screening rows still dedupe by URL.
+    ex["items"] = GATE.merge_excluded_items(ex.get("items") or [], normalize_url=norm_url)[:EXCLUDED_CAP]
     ex["updatedAt"] = NOW_ISO
     ex["rules"] = RULES_TEXT
     tmp = EXCLUDED + ".tmp"

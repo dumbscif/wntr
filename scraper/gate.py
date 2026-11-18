@@ -377,6 +377,62 @@ def apply_gate(records: list, excluded_items: list, *, now=None, sighting=None):
     return kept, excluded, stats
 
 
+def excluded_item_key(item, *, normalize_url=None):
+    """Stable identity for an excluded row: report id if present, else URL, else title.
+
+    Witness-database case pages often share one listing URL (MUFON last-20,
+    UFO*BC, Probed, ufosighting.report). Deduping only by URL would drop
+    distinct reports. Id-less screening rows still key by URL.
+    """
+    if not isinstance(item, dict):
+        return None
+    eid = item.get("id")
+    if eid:
+        return ("id", str(eid))
+    url = (item.get("url") or "").strip()
+    if url:
+        if normalize_url:
+            try:
+                url = normalize_url(url) or url
+            except Exception:
+                pass
+        return ("url", url)
+    title = (item.get("title") or "").strip()
+    return ("title", title) if title else None
+
+
+def merge_excluded_items(*lists, normalize_url=None):
+    """Union excluded lists without dropping distinct report ids.
+
+    Id-less screening rows still collapse to one entry per URL (or title).
+    When two rows share a key, keep the one with a gate/formerRecord, else
+    the earlier row (callers should pass newest-first lists).
+    """
+    def score(e):
+        return (
+            1 if e.get("gate") or e.get("gateVersion") else 0,
+            1 if e.get("formerRecord") else 0,
+            1 if e.get("id") else 0,
+            e.get("excludedAt") or "",
+        )
+
+    by, order, anon = {}, [], 0
+    for lst in lists:
+        for e in lst or []:
+            if not isinstance(e, dict):
+                continue
+            k = excluded_item_key(e, normalize_url=normalize_url)
+            if k is None:
+                anon += 1
+                k = ("anon", anon)
+            if k not in by:
+                by[k] = e
+                order.append(k)
+            elif score(e) > score(by[k]):
+                by[k] = e
+    return [by[k] for k in order]
+
+
 def excluded_ids(excluded_items: Iterable) -> set:
     out = set()
     for item in excluded_items or []:

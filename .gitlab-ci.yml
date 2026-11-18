@@ -37,8 +37,13 @@ pages:
     - pip install -q -r requirements.txt
     - |
       python - <<'PY'
-      import os, urllib.request
+      import json, os, sys, urllib.request
       base = os.environ.get("CI_PAGES_URL", "").rstrip("/")
+      ex_path = "docs/data/excluded.json"
+      repo_ex = None
+      if os.path.exists(ex_path):
+          with open(ex_path, encoding="utf-8") as f:
+              repo_ex = json.load(f)
       targets = {"data/events.json": "docs/data/events.json",
                  "data/excluded.json": "docs/data/excluded.json",
                  "_state/geocache.json": "state/geocache.json",
@@ -56,6 +61,21 @@ pages:
               print("restored", rel, len(body), "bytes")
           except Exception as e:
               print("no previous", rel, "-", e, "(using copy in repo)")
+      # Union the repo copy with anything restored from Pages so gate-excluded
+      # report ids committed in git are not lost when live Pages is behind.
+      if repo_ex is not None and os.path.exists(ex_path):
+          sys.path.insert(0, "scraper")
+          import gate
+          with open(ex_path, encoding="utf-8") as f:
+              live = json.load(f)
+          live["items"] = gate.merge_excluded_items(live.get("items") or [], repo_ex.get("items") or [])
+          if repo_ex.get("about") and not live.get("about"):
+              live["about"] = repo_ex["about"]
+          tmp = ex_path + ".tmp"
+          with open(tmp, "w", encoding="utf-8") as f:
+              json.dump(live, f, ensure_ascii=False, separators=(",", ":"))
+          os.replace(tmp, ex_path)
+          print("merged excluded.json", len(live["items"]), "items")
       PY
     - python scraper/sweep.py
     - rm -rf public && cp -r docs public && mkdir -p public/_state && cp state/* public/_state/

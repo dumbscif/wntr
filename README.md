@@ -152,7 +152,7 @@ scraper/classify.py           assess(): Grok-Page-equivalent screening (concrete
                               stories/politics/TV/explainers/listicles/historical; context-only OSINT) and marker colour
 scraper/seed-grok.json        hand-reviewed Grok Page records, merged into the archive by every sweep (refresh by
                               re-exporting from the Grok Page state)
-docs/data/excluded.json       what the sweep read but did not log, with reasons (capped at 2,500 newest)
+docs/data/excluded.json       what the sweep read but did not log, with reasons (capped at 2,500; one entry per report id, or per URL when no id)
 scraper/geo.py                offline GeoNames gazetteer (cities5000 + admin1), native-script names, optional Nominatim
                               fallback (≤10 lookups/run, 1 req/s, cached in state/geocache.json; WNTR_NO_NOMINATIM=1 disables)
 scraper/import_seed.py        one-time import of the hand-reviewed Nov 2026 archive

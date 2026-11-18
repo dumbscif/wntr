@@ -24,6 +24,7 @@ from classify import clean, _any, assess, EXCLUDE, UFO, SCREEN_VERSION
 import witness_sources as W
 from grading import grade, GRADE_VERSION
 import skycheck as SK
+import gate as GATE
 from geo import Gazetteer, haversine
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -203,12 +204,16 @@ def fetch_tasks(quick, known):
     tasks.append(("Aliens.co.il", lambda: W.fetch_aliens(get, stat, known, norm_url)))
     tasks.append(("UFO Hunters", lambda: W.fetch_ufo_hunters(get, stat)))
     tasks.append(("MUFON", lambda: W.fetch_mufon(get, stat)))
-    # interleave families so a time-budget cut never starves one whole source family
+    # Witness-report databases first (often have media / first-hand accounts), then
+    # interleave the rest so a time-budget cut never starves one whole source family.
+    priority = ("UFO Meldpunt Nederland", "Probed", "Aliens.co.il", "UFO Hunters", "MUFON")
+    first = [x for x in tasks if x[0] in priority]
+    rest = [x for x in tasks if x[0] not in priority]
     fams = {}
-    for t in tasks:
-        fams.setdefault(t[0], []).append(t)
+    for item in rest:
+        fams.setdefault(item[0], []).append(item)
     order = sorted(fams.values(), key=len)
-    out = []
+    out = list(first)
     while any(order):
         for lst in order:
             if lst:
@@ -524,7 +529,7 @@ RULES_TEXT = ("Same inclusion rule as the Grok Page: log only a concrete, newly 
               "Not logged: general UFO news, politics/disclosure/hearings, declassified files, documentaries/TV/podcasts, explainers and questions, "
               "opinion/theories, listicles, events/talks, and anything that mentions only past years (historical rehash). Military exercises, launches, "
               "re-entries and airspace closures are context rings only, never proof. Witness databases rank above news; aggregator/entertainment sites "
-              "need much stronger signals. Duplicates and reposts are merged as extra sources.")
+              "need much stronger signals. Duplicates and reposts are merged as extra sources. A logged sighting must have a reported location, and if its evidence grade is 2 or below it also needs two or more independent corroborating reports (not republishes of one clip).")
 
 def rescreen(reports, excluded, gaz):
     """Apply the current rules to automatic records from older sweeps (idempotent). Hand-reviewed seed records are kept as-is."""
@@ -614,7 +619,11 @@ def run_sky_checks(reports, args, cap=None):
     if args.no_sky:
         return {"skipped": "disabled"}
     todo = [r for r in reports if r.get("kind") == "sighting" and SK.needs_check(r, NOW)]
-    todo.sort(key=lambda r: r.get("sweptAt") or "", reverse=True)
+    todo.sort(key=lambda r: (
+        0 if GATE.has_media(r) else 1,
+        -((r.get("grade") or {}).get("level") or 0),
+        r.get("sweptAt") or "",
+    ))
     todo = todo[:cap]
     if not todo:
         return {"computed": 0}
@@ -659,8 +668,18 @@ def main():
     print(f"seed records added: {seed_added}; re-screen: {rescreen_stats}", flush=True)
     excluded_urls = {norm_url(e["url"]) for e in excluded["items"] if e.get("url")}
     by_id = {r["id"]: r for r in reports}
+    # Gate-excluded sightings stay eligible to receive a new independent source (and maybe come back).
+    gate_held = {}
+    for item in excluded.get("items") or []:
+        rec = item.get("formerRecord") if isinstance(item, dict) and item.get("gate") else None
+        if isinstance(rec, dict) and rec.get("id") and rec["id"] not in by_id:
+            by_id[rec["id"]] = rec
+            rec["_gateHeld"] = True
+            gate_held[rec["id"]] = item
+            if (rec.get("sweptAt") or "") >= iso(NOW - timedelta(days=7))[:10]:
+                pass  # added to recent below once recent exists
     known = {}
-    for r in reports:
+    for r in list(reports) + [by_id[i] for i in gate_held]:
         for s in r.get("sources", []):
             if s.get("url"):
                 known[norm_url(s["url"])] = r["id"]
@@ -669,8 +688,21 @@ def main():
     print(f"Fetching {len(tasks)} source requests with {WORKERS} workers, budget {TIME_BUDGET:.0f}s", flush=True)
     raw = run_fetch(tasks)
     print(f"Fetch phase done in {time.time() - T0:.0f}s, {len(raw)} raw items", flush=True)
+    def _media_rank(it):
+        st = it.get("structured") or {}
+        if st.get("media") or it.get("mediaAttached"):
+            return 0
+        text = (it.get("title") or "") + " " + (it.get("summary") or "")
+        if re.search(r"\b(?:video|footage|photo|photograph|clip|filmed|dashcam|vídeo|foto)\b", text, re.I):
+            return 1
+        return 2
+    raw.sort(key=_media_rank)
 
     recent = [r for r in reports if r.get("kind") in ("sighting", "context") and (r.get("sweptAt") or "") >= iso(NOW - timedelta(days=7))[:10]]
+    cutoff7 = iso(NOW - timedelta(days=7))[:10]
+    for rec in [by_id[i] for i in gate_held]:
+        if rec not in recent and rec.get("kind") in ("sighting", "context", None) and (rec.get("sweptAt") or "") >= cutoff7:
+            recent.append(rec)
     added = merged = skipped_old = dropped = 0
     for it in raw:
         url = it.get("url")
@@ -777,10 +809,21 @@ def main():
     for r in reports:
         r.pop("_toks", None)
 
-    # evidence grade for every sighting (cheap, deterministic) + Sky Check for new/unchecked ones
-    for r in reports:
+    # evidence grade for every sighting (cheap, deterministic), including gate-held copies we may re-admit
+    for r in reports + [by_id[i] for i in gate_held if by_id[i] not in reports]:
         if r.get("kind") == "sighting":
             r["grade"] = grade(r)
+        r.pop("_gateHeld", None)
+    # If a held record gained a new source during this sweep, put it back in reports so apply_gate can re-admit it.
+    for rid, item in list(gate_held.items()):
+        rec = by_id.get(rid)
+        if rec is not None and rec not in reports:
+            reports.append(rec)
+    reports, excluded["items"], gate_stats = GATE.apply_gate(
+        reports, excluded.get("items") or [],
+        sighting=lambda r: (r.get("kind") or "sighting") == "sighting",
+    )
+    print("admission gate:", gate_stats, flush=True)
     sky_stats = run_sky_checks(reports, args)
     print("sky check:", sky_stats, flush=True)
     lc = (0, 0) if args.no_linkcheck else link_check(reports)
@@ -808,6 +851,7 @@ def main():
         "skyCheck": {"version": SK.SKY_VERSION, "lastRun": sky_stats},
         "screening": {"version": SCREEN_VERSION, "rules": RULES_TEXT, "excludedLog": "data/excluded.json",
                       "excludedLogged": len(excluded["items"]), "lastRescreen": rescreen_stats, "seedAddedThisSweep": seed_added},
+        "admissionGate": {"version": GATE.GATE_VERSION, "rule": GATE.GATE_RULE, "lastRun": gate_stats},
         "lastSweep": {"rawItems": len(raw), "added": added, "mergedAsExtraSource": merged, "droppedNotRelevant": dropped,
                       "skippedOlderThan7d": skipped_old, "linksChecked": lc[0], "linksNewlyUnavailable": lc[1]},
         "sourcesStatus": list(status.values()),

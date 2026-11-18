@@ -6,7 +6,7 @@ reads public news and report feeds, keeps sighting reports, finds the place on a
 
 - **Map**: a 3D globe (MapLibre GL, satellite imagery to street level; 2D Leaflet map if WebGL is missing) with glowing dots for reports first found in the last 24 hours (red = civilian/unknown, blue = alleged testing,
   yellow = article says officials/military/police confirmed or identified something, hollow cyan = OSINT/context).
-- **Latest**: everything found in the last 24 hours, including items with no location (never given made-up coordinates).
+- **Latest**: everything found in the last 24 hours, sorted by default with photo/video and higher evidence grades first.
 - **Archive**: every report ever found, permanent, with search and filters.
 - **Flap Watch**: flags a cluster only when 3+ separate reports from 3+ different source sites fall within 150 km and
   72 hours. Otherwise it says "No confirmed flap".
@@ -122,8 +122,10 @@ the project subpath `https://USER.github.io/wntr/`.
   (lights, shape, motion) from a first-hand witness, a witness-report database, or local media relaying a resident's
   report/footage, tied to a place. Not logged: general UFO news, politics/disclosure/hearings, declassified files,
   documentaries/TV/podcasts, explainers and questions, opinion/theories, listicles, talks/events, and items that mention
-  only past years. Military exercises, launches, re-entries and airspace closures are cyan context only. Everything left
-  out is listed with its reasons in `docs/data/excluded.json` (the live site serves it at `data/excluded.json`).
+  only past years. A logged sighting must have a reported location, and if its evidence grade is 2 or below it also needs
+  two or more independent corroborating reports (not republishes of one clip). Military exercises, launches, re-entries
+  and airspace closures are cyan context only. Everything left out is listed with its reasons in
+  `docs/data/excluded.json` (the live site serves it at `data/excluded.json`).
 - Rules aren't perfect: some places will be wrong or only approximate (a town or a state/region centre). Nothing is
   verified. Read the linked source.
 - Some sites block automated reading from cloud servers (NUFORC, Reddit JSON; Reddit RSS is often rate
@@ -143,6 +145,8 @@ scraper/sources.py            every feed: Google News (60 editions, ~120 queries
 scraper/witness_sources.py    witness-report databases used by the Grok Page: Probed.space, Aliens.co.il sightings feed,
                               UFO Hunters, MUFON last-20 (each parser yields nothing rather than guessing if a site changes)
 scraper/grading.py            evidence grade 1-5 with reasons (deterministic, record data only)
+scraper/gate.py               admission gate: require a reported location; grade <= 2 also needs two
+                              independent reports. Failing sightings go to docs/data/excluded.json
 scraper/skycheck.py           Sky Check: satellites (SGP4), launches (LL2), Sun/Moon/planets (skyfield), meteor showers
 scraper/classify.py           assess(): Grok-Page-equivalent screening (concrete sighting + place + source tier; rejects
                               stories/politics/TV/explainers/listicles/historical; context-only OSINT) and marker colour

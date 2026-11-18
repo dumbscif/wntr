@@ -14,7 +14,7 @@
   var S = {
     tab: "map", layers: { red: true, blue: true, yellow: true, context: true }, view: "overview", focusId: "", selectedId: "", detailId: "",
     globalQuery: "", globalOpen: false, latestLimit: 12, query: "", reporterFilter: "all", markerFilter: "all", countryFilter: "all",
-    continentFilter: "all", sortOrder: "newest", regionQuery: "", dateMode: "swept", fromDate: "", toDate: "", onlyMedia: false,
+    continentFilter: "all", sortOrder: "evidence", regionQuery: "", dateMode: "swept", fromDate: "", toDate: "", onlyMedia: false,
     expandReports: false, shapeFolder: "all", contextQuery: "", showOsint: true, archiveLimit: 400, mapNonce: 0, minGrade: "1"
   };
   var openDetails = {}; // remembers which <details> the reader opened, across re-renders
@@ -98,7 +98,17 @@
   }
 
   // ------------------------------------------------------------------ derived
-  function recent() { return REPORTS.filter(function (e) { return inWindow(e.sweptAt); }).sort(function (a, b) { return Date.parse(b.sweptAt) - Date.parse(a.sweptAt) || a.label.localeCompare(b.label); }); }
+  function hasMedia(e) { return !!(e.media && e.media.length); }
+  function reportSort(a, b, order) {
+    if (order === "az") return a.label.localeCompare(b.label);
+    if (order === "newest") return (Date.parse(b.sweptAt) || 0) - (Date.parse(a.sweptAt) || 0) || a.label.localeCompare(b.label);
+    var ma = hasMedia(a) ? 1 : 0, mb = hasMedia(b) ? 1 : 0;
+    if (mb !== ma) return mb - ma;
+    var ga = gradeOf(a), gb = gradeOf(b);
+    if (gb !== ga) return gb - ga;
+    return (Date.parse(b.sweptAt) || 0) - (Date.parse(a.sweptAt) || 0) || a.label.localeCompare(b.label);
+  }
+  function recent() { return REPORTS.filter(function (e) { return inWindow(e.sweptAt); }).sort(function (a, b) { return reportSort(a, b, "evidence"); }); }
   function mappedRecent() { return recent().filter(function (e) { return e.mapped; }); }
   function visibleReports() { return mappedRecent().filter(function (e) { return S.layers[e.marker] !== false && gradeOk(e); }); }
   function eligibleContexts() { return CONTEXTS.filter(function (o) { return o.mapped && inWindow(o.sweptAt); }); }
@@ -117,7 +127,7 @@
         (S.countryFilter === "all" || e.country === S.countryFilter) && (S.shapeFolder === "all" || e.shape === S.shapeFolder) &&
         (!rq || e.label.toLowerCase().indexOf(rq) >= 0) && (!S.fromDate || (d && d >= S.fromDate)) && (!S.toDate || (d && d <= S.toDate)) &&
         (!S.onlyMedia || e.media.length > 0) && gradeOk(e);
-    }).sort(function (a, b) { return S.sortOrder === "az" ? a.label.localeCompare(b.label) : (Date.parse(b.sweptAt) || 0) - (Date.parse(a.sweptAt) || 0) || a.label.localeCompare(b.label); });
+    }).sort(function (a, b) { return reportSort(a, b, S.sortOrder); });
   }
 
   // ------------------------------------------------------------------ primitives
@@ -274,7 +284,7 @@
       select("Country", "countryFilter", S.countryFilter, [{ value: "all", label: "All countries" }].concat(countries.map(function (c) { return { value: c, label: c }; }))) +
       select("Evidence grade", "minGrade", S.minGrade, GRADE_OPTS) +
       select("Shape folder", "shapeFolder", S.shapeFolder, [{ value: "all", label: "All shapes" }].concat(SHAPES.map(function (c) { return { value: c, label: shortShape(c) }; }))) +
-      select("Sort", "sortOrder", S.sortOrder, [{ value: "newest", label: "Newest first swept" }, { value: "az", label: "Location A–Z" }]) + btn("Reset filters", "resetDb") + "</div>" +
+      select("Sort", "sortOrder", S.sortOrder, [{ value: "evidence", label: "Media and evidence first" }, { value: "newest", label: "Newest first swept" }, { value: "az", label: "Location A–Z" }]) + btn("Reset filters", "resetDb") + "</div>" +
       det("advanced", "Advanced filters · affiliation, marker, region, dates & media", '<div class="row end" style="padding:10px 0">' +
         select("Reporter", "reporterFilter", S.reporterFilter, [{ value: "all", label: "All affiliations" }, { value: "civilian", label: "Civilian" }, { value: "military", label: "Military-confirmed / witness" }, { value: "unknown", label: "Unknown affiliation" }]) +
         select("Marker", "markerFilter", S.markerFilter, [{ value: "all", label: "All marker types" }, { value: "red", label: "Red · sighting" }, { value: "blue", label: "Blue · alleged testing" }, { value: "yellow", label: "Yellow · military-confirmed" }]) +
@@ -440,7 +450,7 @@
     render({ focusClose: !sky });
     if (sky) { var d = document.querySelector('[data-key="d-sky|' + id + '"]') || document.querySelector(".watch-drawer .skybox"); if (d) { if (d.tagName === "DETAILS") d.open = true; d.scrollIntoView({ block: "start" }); var sm = d.querySelector("summary"); if (sm) sm.focus({ preventScroll: true }); } }
   }
-  function resetDb() { S.query = ""; S.reporterFilter = "all"; S.markerFilter = "all"; S.countryFilter = "all"; S.continentFilter = "all"; S.shapeFolder = "all"; S.sortOrder = "newest"; S.regionQuery = ""; S.dateMode = "swept"; S.fromDate = ""; S.toDate = ""; S.onlyMedia = false; S.minGrade = "1"; }
+  function resetDb() { S.query = ""; S.reporterFilter = "all"; S.markerFilter = "all"; S.countryFilter = "all"; S.continentFilter = "all"; S.shapeFolder = "all"; S.sortOrder = "evidence"; S.regionQuery = ""; S.dateMode = "swept"; S.fromDate = ""; S.toDate = ""; S.onlyMedia = false; S.minGrade = "1"; }
 
   app.addEventListener("click", function (ev) {
     var t = ev.target.closest("[data-open],[data-action]");

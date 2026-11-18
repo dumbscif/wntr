@@ -2,14 +2,14 @@
 from urllib.parse import quote_plus
 
 # (label, hl, gl, ceid, [queries])  -- Google News RSS search, one per country edition.
-EN = ["UFO sighting", "UAP sighting", "strange lights sky", "mystery drones sighting"]
-ES = ["avistamiento ovni", "luces extrañas cielo", "ovni captan"]
-PT = ["avistamento óvni", "luzes estranhas céu", "ovni flagrado"]
+EN = ["UFO sighting video", "UFO footage", "UFO sighting", "UAP sighting", "strange lights sky", "mystery drones sighting"]
+ES = ["ovni video", "avistamiento ovni", "luces extrañas cielo", "ovni captan"]
+PT = ["óvni vídeo", "avistamento óvni", "luzes estranhas céu", "ovni flagrado"]
 GOOGLE_EDITIONS = [
     ("United States", "en-US", "US", "US:en", EN + ["unidentified object sky"]),
     ("United Kingdom", "en-GB", "GB", "GB:en", EN),
     ("Canada (English)", "en-CA", "CA", "CA:en", EN),
-    ("Canada (French)", "fr-CA", "CA", "CA:fr", ["ovni observation", "lumières étranges ciel"]),
+    ("Canada (French)", "fr-CA", "CA", "CA:fr", ["ovni vidéo", "ovni observation", "lumières étranges ciel"]),
     ("Australia", "en-AU", "AU", "AU:en", EN),
     ("New Zealand", "en-NZ", "NZ", "NZ:en", EN[:2]),
     ("Ireland", "en-IE", "IE", "IE:en", EN[:2]),
@@ -33,13 +33,13 @@ GOOGLE_EDITIONS = [
     ("Spain", "es", "ES", "ES:es", ES),
     ("Brazil", "pt-BR", "BR", "BR:pt-419", PT),
     ("Portugal", "pt-PT", "PT", "PT:pt-150", PT[:2]),
-    ("France", "fr", "FR", "FR:fr", ["ovni observation", "lumières étranges ciel", "ovni aperçu"]),
+    ("France", "fr", "FR", "FR:fr", ["ovni vidéo", "ovni observation", "lumières étranges ciel", "ovni aperçu"]),
     ("Belgium (French)", "fr", "BE", "BE:fr", ["ovni observation"]),
     ("Switzerland (German)", "de", "CH", "CH:de", ["UFO Sichtung"]),
-    ("Germany", "de", "DE", "DE:de", ["UFO Sichtung", "seltsame Lichter Himmel", "Drohnen Sichtung"]),
+    ("Germany", "de", "DE", "DE:de", ["UFO Video Sichtung", "UFO Sichtung", "seltsame Lichter Himmel", "Drohnen Sichtung"]),
     ("Austria", "de", "AT", "AT:de", ["UFO Sichtung"]),
-    ("Italy", "it", "IT", "IT:it", ["avvistamento ufo", "luci strane cielo"]),
-    ("Netherlands", "nl", "NL", "NL:nl", ["ufo waarneming", "vreemde lichten lucht", "drones gespot"]),
+    ("Italy", "it", "IT", "IT:it", ["ufo video", "avvistamento ufo", "luci strane cielo"]),
+    ("Netherlands", "nl", "NL", "NL:nl", ["ufo video", "ufo waarneming", "vreemde lichten lucht", "drones gespot"]),
     ("Belgium (Dutch)", "nl", "BE", "BE:nl", ["ufo waarneming"]),
     ("Sweden", "sv", "SE", "SE:sv", ["ufo observation", "ufo himlen"]),
     ("Norway", "no", "NO", "NO:no", ["ufo observasjon", "drone observert"]),
@@ -73,7 +73,7 @@ def google_news_feeds(window="when:3d"):
             yield {"source": "Google News", "edition": label, "region": gl, "query": q, "url": url}
 
 BING_MARKETS = [
-    ("en-US", "US", ["UFO sighting", "UAP sighting", "strange lights sky"]), ("en-GB", "GB", ["UFO sighting"]),
+    ("en-US", "US", ["UFO sighting video", "UFO footage", "UFO sighting", "UAP sighting", "strange lights sky"]), ("en-GB", "GB", ["UFO sighting"]),
     ("en-CA", "CA", ["UFO sighting"]), ("en-AU", "AU", ["UFO sighting"]), ("en-IN", "IN", ["UFO sighting"]),
     ("es-MX", "MX", ["avistamiento ovni"]), ("es-ES", "ES", ["avistamiento ovni"]), ("es-AR", "AR", ["ovni"]),
     ("pt-BR", "BR", ["óvni avistamento"]), ("fr-FR", "FR", ["ovni"]), ("de-DE", "DE", ["UFO Sichtung"]),

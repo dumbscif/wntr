@@ -191,7 +191,7 @@ def assess(title, summary, *, publisher="", url="", family="", place=None, now_y
     if when: score += 1; reasons.append("concrete sighting time/date")
     if place: score += 2 if (place.get("precision") or "").startswith(("city", "town", "exact", "neighbourhood", "point")) or place.get("gid") else 1; reasons.append("named place")
     if structured.get("witness_count"): score += 1
-    if structured.get("media"): score += 1; reasons.append("photo/video attached")
+    if structured.get("media"): score += 3; reasons.append("photo/video attached")
     if story: score -= 4 * min(2, len(story)); reasons.append("story/news-about-UFOs wording in title: " + ", ".join(re.sub(r"\\b|\\", "", s) for s in story[:3]))
     elif story_body and tier >= 2: score -= 2; reasons.append("story wording in summary")
     if chatter: score -= 5; reasons.append("question/discussion post, not a report")

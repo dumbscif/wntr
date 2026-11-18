@@ -6,6 +6,7 @@ are kept, seed fields refreshed.
     python scraper/import_seed.py /path/to/ufo-sighting-watch/events.json
 """
 import json, os, sys
+from gate import evaluate
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "docs", "data", "events.json")
@@ -72,7 +73,11 @@ def main(path):
     by_id = {r["id"]: r for r in db["reports"]}
     n = 0
     for e in seed.get("events", []):
-        by_id[e["id"]] = convert_event(e); n += 1
+        rec = convert_event(e)
+        ev = evaluate(rec)
+        if not ev["admit"]:
+            continue
+        by_id[e["id"]] = rec; n += 1
     for o in seed.get("osint", []):
         by_id[o["id"]] = convert_osint(o); n += 1
     db["reports"] = sorted(by_id.values(), key=lambda r: r.get("sweptAt") or "", reverse=True)

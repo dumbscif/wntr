@@ -11,6 +11,7 @@ reads public news and report feeds, keeps sighting reports, finds the place on a
 - **Flap Watch**: flags a cluster only when 3+ separate reports from 3+ different source sites fall within 150 km and
   72 hours. Otherwise it says "No confirmed flap".
 - **Sources & About**: which feeds worked in the last sweep, the rules, and the limits.
+- **Page views**: a small count at the top of the main page. Each live site (GitHub Pages and GitLab Pages) has its own count; a combined total is shown when both are available. The number comes from a public counter API (no signup). If the API is down, the count is hidden.
 
 Every entry links to its source. Old links are re-checked and marked "no longer available" if the page returns 404/410.
 
@@ -153,8 +154,10 @@ scraper/geo.py                offline GeoNames gazetteer (cities5000 + admin1), 
 scraper/import_seed.py        one-time import of the hand-reviewed Nov 2026 archive
 scraper/build_gazetteer.py    rebuilds gazetteer.tsv / admin1.tsv / countries.tsv from GeoNames
 docs/                         static site styled after the original Grok Page: index.html, app.js, style.css,
-                              livemap.js (zoomable satellite/dark/street/terrain map), vendor/ (Leaflet 1.9.4 +
-                              Leaflet.markercluster 1.5.3, bundled; BSD-2 / MIT), land.js (offline SVG fallback map)
+                              views.js (page-view counter via Count API, countapi.mileshilliard.com; one key per
+                              platform, hidden if the API is down), livemap.js (zoomable satellite/dark/street/terrain
+                              map), vendor/ (Leaflet 1.9.4 + Leaflet.markercluster 1.5.3, bundled; BSD-2 / MIT),
+                              land.js (offline SVG fallback map)
 docs/data/events.json         the archive the site loads (relative path)
 state/                        geocoder cache and sweep log
 .gitlab-ci.yml                GitLab 'pages' job: pip cache, restore archive from live site, sweep, publish public/

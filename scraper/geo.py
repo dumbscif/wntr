@@ -25,9 +25,18 @@ reddit youtube tiktok instagram facebook twitter x google bing yahoo
 trump biden obama musk schumer luna burchett
 nov dec oct sep sept aug jan feb mar apr jun jul ham ground stop laguna much more less many man men woman women boy girl home house city town village state county province
 jersey
+real america américa sol luz paz flor cielo estrella alba aurora mundo world
+truth verdad alerta alert breaking misterio
+eastern western northern southern
+norte oeste
+luna solis
 """.replace("?", "").split())
 
 PREPS = r"(?:in|over|near|above|at|from|outside|across|around|en|sobre|cerca de|em|no|na|nos|nas|perto de|à|au|aux|près de|au-dessus de|bei|über|nahe|in der nähe von|im|am|nad|w|we|koło|pod|над|в|во|під|у|di|a|sopra|vicino a|boven|bij|te|op|i|på|över|ved|yakınında|'da|'de)"
+# Directional adjectives that may sit between a preposition and a region ("over Eastern Pennsylvania").
+DIR_ADJ = r"(?:eastern|western|northern|southern|north|south|east|west|central|northeastern|northwestern|southeastern|southwestern)"
+# 'i' / 'a' / 'en' etc. must be whole words; otherwise "OVNI Real" looks like a preposition + place.
+PREP_BEFORE = re.compile(r"(?<![\w])" + PREPS + r"\s+(?:the\s+)?(?:(?:state|province|county|city|town|region) of\s+)?(?:" + DIR_ADJ + r"\s+)?$", re.I)
 
 CA_PROV = {"AB": "01", "BC": "02", "MB": "03", "NB": "04", "NL": "05", "NS": "07", "ON": "08", "PE": "09",
            "QC": "10", "SK": "11", "YT": "12", "NT": "13", "NU": "14"}
@@ -159,13 +168,16 @@ class Gazetteer:
         cname = self.countries.get(e["cc"], {}).get("name", "").lower()
         return bool(cname) and nxt.startswith(cname)
 
-    def _entry(self, e, how, matched):
+    def _entry(self, e, how, matched, signals=None):
         a1names = sorted(self.admin1.get((e["cc"], e["a1"]), []), key=len, reverse=True)
         country = self.countries.get(e["cc"], {})
         label = e["name"] + (", " + a1names[0].title() if a1names and len(a1names[0]) > 2 else "") + ", " + country.get("name", e["cc"])
-        return {"place": label, "lat": e["lat"], "lon": e["lon"], "cc": e["cc"], "country": country.get("name", e["cc"]),
+        out = {"place": label, "lat": e["lat"], "lon": e["lon"], "cc": e["cc"], "country": country.get("name", e["cc"]),
                 "continent": country.get("continent"), "tz": e["tz"], "gid": e["gid"],
                 "precision": f"city/town-level approximation from {how} match on '{matched}'; not an object position"}
+        if signals:
+            out["context_signals"] = signals
+        return out
 
     def locate(self, text, region_cc=None):
         """Return best place dict or None. text = title + summary."""
@@ -187,7 +199,7 @@ class Gazetteer:
                     start = m.start(1) + phrase.find(cand) if phrase.find(cand) >= 0 else m.start(1)
                     before = text[max(0, start - 22):start].lower()
                     after = text[start + len(cand):start + len(cand) + 45]
-                    prep = bool(re.search(PREPS + r"\s+(?:the\s+)?$", before))
+                    prep = bool(PREP_BEFORE.search(before))
                     if key in self.country_names:
                         continue
                     # "Colorado", "Oregon", "Paraná", "Chiapas"... : treat as the state/province, not a same-named town
@@ -229,7 +241,7 @@ class Gazetteer:
                         or (e["pop"] >= 1000000 and (e["cc"] in mentioned or region_cc == e["cc"] or prep)) \
                         or (e["cc"] in mentioned and e["pop"] >= 100000)
                     if ok and score > best_score:
-                        best, best_score = (e, "gazetteer", cand), score
+                        best, best_score = (e, "gazetteer", cand, {"prep": prep, "admin": admin, "country_mentioned": e["cc"] in mentioned}), score
         if _is_non_latin(text):
             for name, e in self.nonlatin:
                 if name in text:
@@ -263,26 +275,27 @@ class Gazetteer:
                 if not m:
                     continue
                 before = low[max(0, m.start() - 22):m.start()]
-                prep = bool(re.search(PREPS + r"\s+(?:the\s+)?(?:state of\s+|province of\s+)?$", before))
+                prep = bool(PREP_BEFORE.search(before))
                 if not (prep or cc in mentioned or (region_cc == cc and len(n) >= 6)):
                     continue
                 if region_cc and cc != region_cc and cc not in mentioned:
                     continue
                 score = len(n) + (5 if prep else 0) + (3 if cc in mentioned else 0)
                 if not best or score > best[0]:
-                    best = (score, cc, code, n)
+                    best = (score, cc, code, n, prep)
         for m in re.finditer(r",\s*([A-Z]{2})\b(?![a-z])", text):
             k = ("US", m.group(1))
             if k in self.a1_centroid and (not best or best[0] < 30):
-                best = (30, "US", m.group(1), sorted(self.admin1[k], key=len)[-1])
+                best = (30, "US", m.group(1), sorted(self.admin1[k], key=len)[-1], True)
         if not best:
             return None
-        _, cc, code, n = best
+        _, cc, code, n, had_prep = best
         lat, lon, tz = self.a1_centroid[(cc, code)]
         country = self.countries.get(cc, {})
         return {"place": n.title() + ", " + country.get("name", cc), "lat": lat, "lon": lon, "cc": cc, "country": country.get("name", cc),
                 "continent": country.get("continent"), "tz": tz, "gid": f"a1:{cc}.{code}",
-                "precision": f"state/province-level only (population-weighted centre of GeoNames towns in '{n.title()}'); NOT a sighting position"}
+                "precision": f"state/province-level only (population-weighted centre of GeoNames towns in '{n.title()}'); NOT a sighting position",
+                "context_signals": {"prep": bool(had_prep), "admin": True, "country_mentioned": cc in mentioned or bool(region_cc == cc)}}
 
     def _nominatim(self, text):
         m = re.search(r"\b(?:over|near|above|in)\s+((?:[A-Z][a-zà-ÿ'’-]+\s?){1,3})(?:,\s*([A-Z][A-Za-z .]{1,25}))?", text)

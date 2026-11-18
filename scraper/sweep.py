@@ -460,9 +460,21 @@ def same_event(a_toks, a_lat, a_lon, r):
     pw = tokens(r.get("place") or "")
     return any(len(w) >= 6 and w not in GENERIC and w not in pw for w in (a_toks & rt))
 
+def _confident_place(place, family=None):
+    """YouTube titles often capitalize ordinary words; only keep a pin with real context."""
+    if not place:
+        return None
+    if (family or "") != "YouTube":
+        return place
+    sig = place.get("context_signals") or {}
+    if sig.get("prep") or sig.get("admin") or sig.get("country_mentioned"):
+        return place
+    return None
+
 def locate_item(gaz, it):
     hint = it.get("place_hint")
     place = None
+    fam = it.get("family")
     if hint:
         place = gaz.locate(hint, it.get("region"))
         if not place and it.get("probed_lat") is None:
@@ -470,14 +482,44 @@ def locate_item(gaz, it):
     if it.get("probed_lat") is not None and it.get("probed_lon") is not None:
         plat, plon = float(it["probed_lat"]), float(it["probed_lon"])
         if place and haversine(place["lat"], place["lon"], plat, plon) <= 150:
-            return place
+            return _confident_place(place, fam) or place
         p = dict(place) if place and haversine(place["lat"], place["lon"], plat, plon) <= 1500 else {}
         p.update({"lat": round(plat, 4), "lon": round(plon, 4), "place": hint or p.get("place") or "location named in post",
-                  "precision": f"approximate: Probed.space geocode of the place named in the post ('{hint}'); not a witness-provided position", "gid": None})
+                  "precision": f"approximate: Probed.space geocode of the place named in the post ('{hint}'); not a witness-provided position", "gid": None,
+                  "context_signals": {"prep": True, "admin": False, "country_mentioned": True}})
         return p
     if not place:
         place = gaz.locate(place_text(it), it.get("region"))
-    return place
+    return _confident_place(place, fam)
+
+def recheck_auto_locations(reports, gaz):
+    """Clear automatic pins the current gazetteer no longer stands behind (stoplist / weak YouTube titles)."""
+    n = 0
+    for r in reports:
+        if r.get("origin") != "auto" or r.get("lat") is None:
+            continue
+        s0 = (r.get("sources") or [{}])[0]
+        fam = (r.get("feed") or "").split(" / ")[0]
+        it = {"title": r.get("title") or "", "summary": r.get("summary") or "",
+              "publisher": s0.get("name") or "", "family": fam}
+        place = locate_item(gaz, it)
+        same = False
+        if place:
+            if r.get("gid") and place.get("gid") == r.get("gid"):
+                same = True
+            elif haversine(place["lat"], place["lon"], r["lat"], r["lon"]) <= 50:
+                same = True
+        if same:
+            continue
+        from geo import COMMON
+        m = re.search(r"match on '([^']+)'", r.get("precision") or "")
+        matched = m.group(1).lower() if m else ""
+        if fam == "YouTube" or matched in COMMON or (not place and "gazetteer match" in (r.get("precision") or "")):
+            for k in ("lat", "lon", "place", "country", "continent", "gid", "tz"):
+                r[k] = None
+            r["precision"] = "no location found in source text; earlier automatic placement removed (ambiguous or stoplisted place name)"
+            n += 1
+    return n
 
 def appearance_of(it, summary):
     st = it.get("structured") or {}
@@ -664,7 +706,8 @@ def main():
     excluded = load_excluded()
     seed_added = sync_seed(reports)
     reports, rescreen_stats = rescreen(reports, excluded, gaz)
-    print(f"seed records added: {seed_added}; re-screen: {rescreen_stats}", flush=True)
+    loc_fixed = recheck_auto_locations(reports, gaz)
+    print(f"seed records added: {seed_added}; re-screen: {rescreen_stats}; stale geocodes cleared: {loc_fixed}", flush=True)
     excluded_urls = {norm_url(e["url"]) for e in excluded["items"] if e.get("url")}
     by_id = {r["id"]: r for r in reports}
     # Gate-excluded sightings stay eligible to receive a new independent source (and maybe come back).
@@ -762,10 +805,18 @@ def main():
             merged += 1
             continue
         if a["decision"] == "exclude":
-            log_excluded(excluded, it, url, pub, a)
-            excluded_urls.add(key)
-            dropped += 1
-            continue
+            # YouTube: a first-hand-looking video with no confident place still becomes
+            # a sighting record so the admission gate can exclude it as no-location
+            # (not only a screening drop). Compilations and off-topic titles stay screened out.
+            if it.get("family") == "YouTube" and a0.get("decision") != "exclude" and dup is None:
+                a = dict(a0)
+                a["reasons"] = [x for x in (a.get("reasons") or []) if x != "named place"]
+                a["reasons"].append("no confident place in title/description; left unmapped for the admission gate")
+            else:
+                log_excluded(excluded, it, url, pub, a)
+                excluded_urls.add(key)
+                dropped += 1
+                continue
         kind = "sighting" if a["decision"] == "sighting" else "context"
         rid = "auto-" + hashlib.sha1(key.encode()).hexdigest()[:12]
         ev_local = it.get("event_local")

@@ -147,3 +147,7 @@ Code: MIT. Place data: GeoNames, CC BY 4.0. Linked articles belong to their publ
 The Map tab uses free, keyless tile servers: Esri World Imagery with Esri's boundaries-and-places labels (default
 "Satellite (Earth view)"), CARTO dark_all ("Dark map"), Esri World Street Map and Esri World Topo Map. Attribution is
 shown on the map. If Leaflet cannot load, the page falls back to the built-in SVG outline map.
+
+## Branding
+
+`docs/img/` holds the Project StarFire logo, only cropped, scaled and padded on its own dark background (#000719). It includes `banner-wide.png` (1600×400, desktop header) and `banner-compact.png` (960×300, phones). It also has `icon-512/192/180/32/16.png` and `favicon.ico`, which are the radar emblem crop. `og-1200x630.png` is the social-share image. `docs/manifest.webmanifest` lists the app icons.

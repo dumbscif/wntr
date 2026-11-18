@@ -227,3 +227,8 @@ footer.foot { margin-top: 40px; color: var(--text-3); font-size: 14px; text-alig
   .live-map .leaflet-control-attribution { font-size: 10px; max-width: 70%; }
   .live-map .leaflet-control-scale { margin-bottom: 34px; }
 }
+
+/* brand banner (Project StarFire logo, cropped/padded; normal flow, not sticky) */
+.brand-banner { display: block; margin: 0 0 14px; border-radius: 14px; overflow: hidden; background: #000719; border: 1px solid var(--b-default); }
+.brand-banner img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 1; }
+@media (max-width: 600px) { .brand-banner { border-radius: 10px; margin-bottom: 10px; } .brand-banner img { aspect-ratio: 16 / 5; } }

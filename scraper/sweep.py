@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sources as S
 from classify import clean, _any, assess, EXCLUDE, UFO, SCREEN_VERSION
 import witness_sources as W
+from grading import grade, GRADE_VERSION
+import skycheck as SK
 from geo import Gazetteer, haversine
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -600,10 +602,38 @@ def sync_seed(reports):
                 for x in s.get("sources", []):   # keep link-check history
                     if av.get(norm_url(x.get("url", ""))):
                         x["availability"] = av[norm_url(x.get("url", ""))]
+                if old.get("skyCheck") and all(old.get(k) == s.get(k) for k in ("eventDate", "eventTimeLocal", "tz", "lat", "lon", "precision")):
+                    s["skyCheck"] = old["skyCheck"]   # same time/place: keep the result computed with orbit data of that time
                 reports[idx[s["id"]]] = s
         else:
             reports.append(s); n += 1
     return n
+
+def run_sky_checks(reports, args, cap=None):
+    cap = int(os.environ.get("WNTR_SKY_CAP", "300")) if cap is None else cap
+    if args.no_sky:
+        return {"skipped": "disabled"}
+    todo = [r for r in reports if r.get("kind") == "sighting" and SK.needs_check(r, NOW)]
+    todo.sort(key=lambda r: r.get("sweptAt") or "", reverse=True)
+    todo = todo[:cap]
+    if not todo:
+        return {"computed": 0}
+    t0 = time.time()
+    def fetch(url):
+        try:
+            r = session.get(url, timeout=(10, 60))
+            return r if r.ok else None
+        except Exception:
+            return None
+    sky = SK.Sky(os.environ.get("WNTR_SKY_CACHE", os.path.join(ROOT, ".cache", "sky")), get=fetch)
+    n = checked = 0
+    for r in todo:
+        if time.time() - t0 > float(os.environ.get("WNTR_SKY_BUDGET", "120")):
+            break
+        r["skyCheck"] = SK.sky_check(sky, r, NOW)
+        n += 1
+        checked += r["skyCheck"]["status"] == "checked"
+    return {"computed": n, "withTimeAndPlace": checked, "seconds": round(time.time() - t0), "notes": sky.notes[:5]}
 
 # ---------------------------------------------------------------- main
 def load():
@@ -617,6 +647,7 @@ def main():
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--no-linkcheck", action="store_true")
     ap.add_argument("--no-fetch", action="store_true", help="only apply seed sync + re-screening (testing)")
+    ap.add_argument("--no-sky", action="store_true", help="skip Sky Check")
     args = ap.parse_args()
     os.makedirs(STATE, exist_ok=True)
     db = load()
@@ -726,6 +757,8 @@ def main():
             rep["shapeHint"] = structured["shape"]
         if structured.get("witness_count"):
             rep["witnessCount"] = structured["witness_count"]
+        if structured.get("media"):
+            rep["mediaAttached"] = True
         if structured.get("probed_context"):
             rep["explanations"] = ["Probed.space context note: " + x for x in structured["probed_context"][:3]]
         if it.get("alt_url"):
@@ -744,6 +777,12 @@ def main():
     for r in reports:
         r.pop("_toks", None)
 
+    # evidence grade for every sighting (cheap, deterministic) + Sky Check for new/unchecked ones
+    for r in reports:
+        if r.get("kind") == "sighting":
+            r["grade"] = grade(r)
+    sky_stats = run_sky_checks(reports, args)
+    print("sky check:", sky_stats, flush=True)
     lc = (0, 0) if args.no_linkcheck else link_check(reports)
     gaz.save_cache()
     fw = flap_watch(reports)
@@ -765,6 +804,8 @@ def main():
         "reportCount": len(reports),
         "mappedLast24h": sum(1 for r in last24 if r.get("lat") is not None),
         "noLocationCount": sum(1 for r in reports if r.get("lat") is None),
+        "grading": {"version": GRADE_VERSION, "levels": {str(k): v for k, v in __import__("grading").LABELS.items()}},
+        "skyCheck": {"version": SK.SKY_VERSION, "lastRun": sky_stats},
         "screening": {"version": SCREEN_VERSION, "rules": RULES_TEXT, "excludedLog": "data/excluded.json",
                       "excludedLogged": len(excluded["items"]), "lastRescreen": rescreen_stats, "seedAddedThisSweep": seed_added},
         "lastSweep": {"rawItems": len(raw), "added": added, "mergedAsExtraSource": merged, "droppedNotRelevant": dropped,

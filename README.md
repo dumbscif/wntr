@@ -99,6 +99,19 @@ GitHub can start scheduled runs a few minutes to an hour late when its servers a
   data commits normally count as activity, but if you ever see a "disabled" banner in Actions, click **Enable workflow**.
 - **Want a different time?** Edit `.github/workflows/sweep.yml` and change the two `cron:` lines (UTC times).
 
+## Evidence grades and Sky Check
+
+- **Evidence grade (1–5)**, computed from each record only: 5 official/military/police confirmation of this report or
+  radar/sensor data cited · 4 photo or video linked (or the cited post/article is the footage) · 3 two or more witnesses
+  or separate reports stated · 2 first-hand witness (own report or named witness) · 1 single anonymous/second-hand claim.
+  Then one step down for each missing basic: second-hand account with the original not opened, no sighting date, no
+  location (never below 1). It grades documentation, not what the object was. Filter by grade on the Map and Archive tabs.
+- **Sky Check** (for reports with a recorded time and place): Starlink and bright satellites/ISS (CelesTrak TLEs + SGP4,
+  only within 14 days of the orbit data and only for precise locations), rocket launches within 1,600 km from 3 h before
+  to 1 h after (Launch Library 2), Sun/Moon/bright planets (JPL DE421 via skyfield) and major meteor showers. Not checked:
+  aircraft, re-entries, weather, balloons, drones. Results are possible explanations, not verdicts. Computed once per
+  report and cached in the record; data files are cached in `.cache/sky` (CI cache).
+
 ## Costs and limits
 
 - GitHub Actions and Pages are free for public repositories. One sweep takes roughly 1.5–3 minutes (fetching is concurrent and capped at 180 seconds).
@@ -127,6 +140,8 @@ scraper/sources.py            every feed: Google News (60 editions, ~120 queries
                               Mastodon tags, Open Minds + Liberation Times RSS, UFO Meldpunt Nederland
 scraper/witness_sources.py    witness-report databases used by the Grok Page: Probed.space, Aliens.co.il sightings feed,
                               UFO Hunters, MUFON last-20 (each parser yields nothing rather than guessing if a site changes)
+scraper/grading.py            evidence grade 1-5 with reasons (deterministic, record data only)
+scraper/skycheck.py           Sky Check: satellites (SGP4), launches (LL2), Sun/Moon/planets (skyfield), meteor showers
 scraper/classify.py           assess(): Grok-Page-equivalent screening (concrete sighting + place + source tier; rejects
                               stories/politics/TV/explainers/listicles/historical; context-only OSINT) and marker colour
 scraper/seed-grok.json        hand-reviewed Grok Page records, merged into the archive by every sweep (refresh by

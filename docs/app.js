@@ -15,7 +15,7 @@
     tab: "map", layers: { red: true, blue: true, yellow: true, context: true }, view: "overview", focusId: "", selectedId: "", detailId: "",
     globalQuery: "", globalOpen: false, latestLimit: 12, query: "", reporterFilter: "all", markerFilter: "all", countryFilter: "all",
     continentFilter: "all", sortOrder: "newest", regionQuery: "", dateMode: "swept", fromDate: "", toDate: "", onlyMedia: false,
-    expandReports: false, shapeFolder: "all", contextQuery: "", showOsint: true, archiveLimit: 400, mapNonce: 0
+    expandReports: false, shapeFolder: "all", contextQuery: "", showOsint: true, archiveLimit: 400, mapNonce: 0, minGrade: "1"
   };
   var openDetails = {}; // remembers which <details> the reader opened, across re-renders
 
@@ -33,6 +33,11 @@
   function reporterLabel(e) { return e.marker === "yellow" ? (e.reporterType === "military" ? "Military-confirmed · civilian witness" : "Official confirmation cited") : e.reporterType === "civilian" ? "Civilian" : "Unknown affiliation"; }
   function reporterTag(e) { return e.marker === "yellow" ? "Military-confirmed" : e.reporterType === "civilian" ? "Civilian" : "Unknown affiliation"; }
   function markerLabel(e) { return e.marker === "yellow" ? "Yellow · military-confirmed report" : e.marker === "blue" ? "Blue · alleged unidentified-craft testing" : "Red · sighting claim"; }
+  var GRADE_LABELS = { 1: "Single unverified claim", 2: "First-hand witness", 3: "Multiple witnesses", 4: "Photo / video", 5: "Official or sensor confirmation" };
+  function gradeOf(e) { return e.grade && e.grade.level ? e.grade.level : 1; }
+  function gradeBadge(e, short) { var g = gradeOf(e); return '<span class="gbadge g' + g + '" title="' + esc("Evidence grade " + g + " of 5: " + GRADE_LABELS[g] + ". Measures documentation, not what the object was.") + '">' + (short ? "G" + g : "Grade " + g + "/5 · " + esc(GRADE_LABELS[g])) + "</span>"; }
+  function gradeOk(e) { return gradeOf(e) >= Number(S.minGrade || 1); }
+  var GRADE_OPTS = [{ value: "1", label: "All grades" }, { value: "2", label: "2+ first-hand" }, { value: "3", label: "3+ multiple witnesses" }, { value: "4", label: "4+ strongest" }, { value: "5", label: "5 official only" }];
   function compactDate(e) { return e.historical ? "historical" : ((e.date || "").match(/^\d{4}-\d{2}-\d{2}/) || [((e.date || "").match(/^\d{4}-\d{2}/) || ["Date not reported"])[0]])[0]; }
   function sightingLabel(e) {
     if (e.timeDenver && !/not reported/i.test(e.timeDenver)) return e.timeDenver + " (America/Denver)";
@@ -83,7 +88,7 @@
       explanations: r.explanations || [], sources: (r.sources || []).filter(function (s) { return s && s.url; }), media: r.media || [],
       reporterType: r.reporterType || "unknown", reporterTypeBasis: r.reporterTypeBasis || "", allegedTesting: !!r.allegedTesting,
       testingStatus: r.testingStatus || null, count: Math.max(1, r.reportCount || 1), corrections: r.corrections || [], relevance: r.relevance || "",
-      historical: r.id === "evt-starr-county-tx-2026-11"
+      historical: r.id === "evt-starr-county-tx-2026-11", grade: r.grade || null, sky: r.skyCheck || null
     };
     e.shape = r.shape && SHAPES.indexOf(r.shape) >= 0 ? r.shape : (r.origin === "seed" && r.shape ? "Other" : guessShape(e.title + " " + (r.appearance || "") + " " + (r.summary || "")));
     e.shapeBasis = r.shape ? "Hand-reviewed category" : "Automatic keyword match on the headline/summary; not verified";
@@ -95,7 +100,7 @@
   // ------------------------------------------------------------------ derived
   function recent() { return REPORTS.filter(function (e) { return inWindow(e.sweptAt); }).sort(function (a, b) { return Date.parse(b.sweptAt) - Date.parse(a.sweptAt) || a.label.localeCompare(b.label); }); }
   function mappedRecent() { return recent().filter(function (e) { return e.mapped; }); }
-  function visibleReports() { return mappedRecent().filter(function (e) { return S.layers[e.marker] !== false; }); }
+  function visibleReports() { return mappedRecent().filter(function (e) { return S.layers[e.marker] !== false && gradeOk(e); }); }
   function eligibleContexts() { return CONTEXTS.filter(function (o) { return o.mapped && inWindow(o.sweptAt); }); }
   function visibleContexts() { return S.layers.context ? eligibleContexts() : []; }
   function findAny(id) { return REPORTS.filter(function (r) { return r.id === id; })[0] || CONTEXTS.filter(function (c) { return c.id === id; })[0]; }
@@ -111,7 +116,7 @@
         (S.markerFilter === "all" || e.marker === S.markerFilter) && (S.continentFilter === "all" || e.continent === S.continentFilter) &&
         (S.countryFilter === "all" || e.country === S.countryFilter) && (S.shapeFolder === "all" || e.shape === S.shapeFolder) &&
         (!rq || e.label.toLowerCase().indexOf(rq) >= 0) && (!S.fromDate || (d && d >= S.fromDate)) && (!S.toDate || (d && d <= S.toDate)) &&
-        (!S.onlyMedia || e.media.length > 0);
+        (!S.onlyMedia || e.media.length > 0) && gradeOk(e);
     }).sort(function (a, b) { return S.sortOrder === "az" ? a.label.localeCompare(b.label) : (Date.parse(b.sweptAt) || 0) - (Date.parse(a.sweptAt) || 0) || a.label.localeCompare(b.label); });
   }
 
@@ -143,7 +148,7 @@
   function popupHtml(x, isReport) {
     var c = isReport ? markerColor(x.marker) : CYAN;
     return '<div class="lm-pop"><div class="lm-pop-k"><span class="lm-pop-dot" style="' + (isReport ? "background:" + c + ";box-shadow:0 0 8px " + c : "border:2px solid " + c) + '"></span>' + esc(isReport ? reporterLabel(x) : "Context only · not a sighting") + "</div>" +
-      "<strong>" + esc(isReport ? x.label : x.title) + "</strong>" +
+      "<strong>" + esc(isReport ? x.label : x.title) + "</strong>" + (isReport ? '<div class="lm-pop-g">' + gradeBadge(x) + "</div>" : "") +
       (isReport ? "<div>" + esc(sightingLabel(x)) + "</div><div>" + esc(shortShape(x.shape)) + (x.media.length ? " · " + x.media.length + " media" : "") + (x.historical ? " · HISTORICAL" : "") + "</div>" : "<div>" + esc(x.date || "Activity date not reported") + "</div>") +
       "<div>First swept " + esc(formatDenver(x.sweptAt)) + " · " + x.sources.length + " source" + (x.sources.length === 1 ? "" : "s") + "</div>" +
       '<div class="lm-pop-p">' + esc(x.precision || "") + "</div>" +
@@ -185,7 +190,7 @@
   // ------------------------------------------------------------------ navigator
   function recRow(e) {
     return '<button type="button" class="rec-row watch-record-row" data-open="' + esc(e.id) + '" title="' + esc("Open full record: " + e.label + " · " + sightingLabel(e)) + '">' +
-      '<span class="dot" title="' + esc(markerLabel(e)) + '" style="background:' + markerColor(e.marker) + '"></span><span class="lbl">' + esc(e.label) + "</span><span>" + esc(compactDate(e)) + "</span><span>" + esc(shortShape(e.shape)) + '</span><span class="tag">' + esc(reporterTag(e)) + "</span>" +
+      '<span class="dot" title="' + esc(markerLabel(e)) + '" style="background:' + markerColor(e.marker) + '"></span><span class="lbl">' + esc(e.label) + "</span>" + gradeBadge(e, true) + "<span>" + esc(compactDate(e)) + "</span><span>" + esc(shortShape(e.shape)) + '</span><span class="tag">' + esc(reporterTag(e)) + "</span>" +
       (e.media.length ? "<span>" + e.media.length + " media</span>" : "") + (e.mapped ? "" : '<span class="muted">Not mapped</span>') + (reportUnavailable(e) ? '<span class="warn">No longer available</span>' : "") + "</button>";
   }
   function navigator(list, keyPrefix, expand, searching) {
@@ -224,20 +229,20 @@
       var n = vis.filter(function (e) { return e.marker === l.key; }).length, t = rec.filter(function (e) { return e.marker === l.key; }).length;
       return '<span class="row g8"><span class="legend-dot" aria-hidden="true" style="background:' + l.color + ";box-shadow:0 0 8px " + l.color + '"></span>' + toggle(l.label + " (" + n + "/" + t + ")", "layer:" + l.key, S.layers[l.key]) + "</span>";
     }).join("") + '<span class="row g8"><span class="legend-ring" aria-hidden="true"></span>' + toggle("Cyan · OSINT / military context (" + vc.length + "/" + ec.length + ")", "layer:context", S.layers.context) + "</span></div>";
-    var unmapped = recent().length - rec.length;
+    var unmapped = recent().length - rec.length, hiddenG = rec.filter(function (e) { return !gradeOk(e); }).length;
     var list = (vis.length ? navigator(vis, "maplist", false, false) : "") + vc.map(function (o) { return '<button type="button" class="control ctx-btn watch-record-row" data-open="' + esc(o.id) + '">Context only · ' + esc(o.country) + " · " + esc(o.title) + "</button>"; }).join("");
     return section("watch-panel-map", "Map · last 24 hours",
-      '<div class="row between">' + seg("view", S.view, [{ value: "overview", label: "World" }, { value: "location", label: "Selected location" }]) + btn("Reset map & layers", "resetMap") + "</div>" +
+      '<div class="row between">' + seg("view", S.view, [{ value: "overview", label: "World" }, { value: "location", label: "Selected location" }]) + select("Evidence grade", "minGrade", S.minGrade, GRADE_OPTS) + btn("Reset map & layers", "resetMap") + "</div>" +
       det("layers", "Layers & legend · " + vis.length + "/" + rec.length + " reports · " + vc.length + "/" + ec.length + " context rings", legend) +
       worldMap(vis, vc, focus, S.view, S.detailId || S.focusId || null) +
-      text("First swept: " + esc(formatDenver(new Date(LAST_MS - 86400000).toISOString())) + " → " + esc(formatDenver(LAST)) + ". " + (REPORTS.length - recent().length) + " older reports remain in Archive" + (unmapped ? "; " + unmapped + " recent reports had no place the sweep could map and are listed under Latest" : "") + ". Discovery time is not sighting time; newly found historical reports are labeled.") +
+      text("First swept: " + esc(formatDenver(new Date(LAST_MS - 86400000).toISOString())) + " → " + esc(formatDenver(LAST)) + ". " + (REPORTS.length - recent().length) + " older reports remain in Archive" + (unmapped ? "; " + unmapped + " recent reports had no place the sweep could map and are listed under Latest" : "") + ". Discovery time is not sighting time; newly found historical reports are labeled." + (hiddenG ? " " + hiddenG + " reports below grade " + S.minGrade + " are hidden by the evidence filter." : "")) +
       det("maplist", "Accessible location list · same visible map markers", list || '<p class="muted">No visible markers.</p>'));
   }
   function latestTab() {
     var rec = recent();
     var cards = rec.slice(0, S.latestLimit).map(function (e) {
       var c = markerColor(e.marker);
-      return '<button type="button" class="control card-btn watch-record-row" data-open="' + esc(e.id) + '"><span class="row g8"><span aria-hidden="true" class="dot" style="width:9px;height:9px;background:' + c + ";box-shadow:0 0 8px " + c + '"></span><strong style="flex:1 1 240px">' + esc(e.label) + "</strong><span>" + esc(formatDenver(e.sweptAt)) + "</span></span>" +
+      return '<button type="button" class="control card-btn watch-record-row" data-open="' + esc(e.id) + '"><span class="row g8"><span aria-hidden="true" class="dot" style="width:9px;height:9px;background:' + c + ";box-shadow:0 0 8px " + c + '"></span><strong style="flex:1 1 240px">' + esc(e.label) + "</strong>" + gradeBadge(e) + "<span>" + esc(formatDenver(e.sweptAt)) + "</span></span>" +
         '<span class="row g10"><span>' + esc(shortShape(e.shape)) + '</span><span class="tag" style="border-radius:4px;padding:1px 6px">' + esc(reporterLabel(e)) + "</span><span>Sighting: " + esc(compactDate(e)) + "</span>" + (e.media.length ? "<span>" + e.media.length + " media</span>" : "") + (e.mapped ? "" : '<span class="muted">Not mapped</span>') + (e.historical ? "<strong>Historical</strong>" : "") + (reportUnavailable(e) ? '<strong class="warn">No longer available</strong>' : "") + "</span>" +
         (e.appearance ? '<span class="one-line">' + esc(e.appearance) + "</span>" : "") + "</button>";
     }).join("");
@@ -257,6 +262,7 @@
       seg("continentFilter", S.continentFilter, [{ value: "all", label: "All continents", count: REPORTS.length }].concat(matching.map(function (c) { return { value: c, label: c, count: REPORTS.filter(function (e) { return e.continent === c; }).length }; }))) +
       '<div class="row end">' + input("Search archive", "query", S.query, "Place, shape, narrative, source…", true) +
       select("Country", "countryFilter", S.countryFilter, [{ value: "all", label: "All countries" }].concat(countries.map(function (c) { return { value: c, label: c }; }))) +
+      select("Evidence grade", "minGrade", S.minGrade, GRADE_OPTS) +
       select("Shape folder", "shapeFolder", S.shapeFolder, [{ value: "all", label: "All shapes" }].concat(SHAPES.map(function (c) { return { value: c, label: shortShape(c) }; }))) +
       select("Sort", "sortOrder", S.sortOrder, [{ value: "newest", label: "Newest first swept" }, { value: "az", label: "Location A–Z" }]) + btn("Reset filters", "resetDb") + "</div>" +
       det("advanced", "Advanced filters · affiliation, marker, region, dates & media", '<div class="row end" style="padding:10px 0">' +
@@ -331,6 +337,7 @@
     var cards = '<div class="linkcards">' + idx.map(function (s, i) { return '<a class="lc" href="' + esc(safeUrl(s.url)) + '" target="_blank" rel="noopener noreferrer"><span class="n">' + (i + 1) + '</span><span class="tt">[' + esc(s.role || "source") + "] " + esc(sourceName(s)) + (s.note ? " (" + esc(s.note) + ")" : "") + " · " + esc(availabilityLabel(s)) + '</span><span class="meta">' + esc(sourceHost(s.url)) + " · " + esc(publicationTime(s.published)) + "</span></a>"; }).join("") + "</div>";
     return section("watch-panel-health", "Sources & archive health",
       text("Swept records survive source removals. Link availability is re-checked a few dozen links per sweep; it is separate from the research and 24-hour map clock.") + rows(list) +
+      howGradingSection() +
       section(null, "Sweep sources · last run", rows(feeds)) +
       section(null, "Methodology & caveats",
         text("Public-source claims are unverified, coverage is bounded and uneven, and this is not an exhaustive census or a private/deep-web search. The site is rebuilt by an automatic sweep about twice a day; it is not a live stream.") +
@@ -340,6 +347,29 @@
         text("The automatic sweep applies these rules with no AI and no human review. Places can be wrong or only approximate (a town or a state/region centre), and reports with no place found are listed but never given made-up coordinates. Hand-reviewed reports copied from the Grok Page keep their reviewed details.") +
         text("Continent grouping follows recorded geography only. North America includes Central America and the Caribbean; Hawaii is Oceania. Multi-country reports count once. Place names: GeoNames (CC BY 4.0) and OpenStreetMap Nominatim."), "methodology") +
       section(null, "Source index · " + idx.length + " distinct cited URLs", text("Every narrative opens with its own full source links in the shared record reader. This index retains all report and context citations, grouped by source host.") + cards, "sourceindex"));
+  }
+
+  // ------------------------------------------------------------------ grade & sky check
+  function gradeBlock(e) {
+    var reasons = (e.grade && e.grade.reasons) || ["Not graded yet"];
+    return '<div class="gbox"><div class="row g10">' + gradeBadge(e) + '<button type="button" class="linkbtn" data-action="howGrading">How grading works</button></div><ul class="greasons">' + reasons.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ul></div>";
+  }
+  function skyBlock(e) {
+    var sc = e.sky;
+    var how = '<button type="button" class="linkbtn" data-action="howGrading" data-arg="sky">What Sky Check covers</button>';
+    if (!sc) return det("d-sky|" + e.id, "Sky Check · not run yet", "<p>Not computed yet; it runs on the next sweep. " + how + "</p>", { scls: "sumline" });
+    if (sc.status !== "checked") return '<div class="skybox"><strong>Sky Check</strong> · <span class="muted">' + esc(sc.reason || "Sky Check unavailable") + "</span> " + how + "</div>";
+    var hits = sc.items.filter(function (i) { return i.flag; }).length;
+    var body = '<p class="muted">For ' + esc(sc.atDenver) + (sc.approximate ? " (approximate time, wider window)" : "") + " · " + esc(sc.timeBasis) + (sc.locationApproximate ? " · location approximate" : "") + ". " + esc(sc.note || "") + "</p>" +
+      '<ul class="skylist">' + sc.items.map(function (i) { var nc = /^Not checked|Flight data not checked/.test(i.result); return '<li class="' + (i.flag ? "hit" : nc ? "nc" : "ok") + '"><span class="sk-k">' + (i.flag ? "Possible" : nc ? "Not checked" : "Checked") + " · " + esc(i.check) + "</span> " + esc(nc ? i.result.replace(/^(Not checked|Flight data not checked):\s*/, "") : i.result) + (i.url ? " " + ext(i.url, "Launch Library 2 record ↗") : "") + "</li>"; }).join("") + "</ul>" + how;
+    return det("d-sky|" + e.id, "Sky Check · " + (hits ? hits + " possible explanation" + (hits === 1 ? "" : "s") + " to compare" : "nothing notable found") + " · " + esc(sc.atDenver), body, { open: true, scls: "sumline" });
+  }
+  function howGradingSection() {
+    var rows5 = [5, 4, 3, 2, 1].map(function (g) { return '<div class="r"><div class="t">' + gradeBadge({ grade: { level: g } }) + '</div><div class="d">' + esc({ 5: "A military, government or police body confirmed or identified this report, or radar/sensor data is cited.", 4: "A photo or video is linked from the record, or the cited post/article is itself the footage.", 3: "Two or more witnesses or separate reports are stated.", 2: "The witness's own report (report form, own post) or a named witness quoted by media.", 1: "A single anonymous, second-hand or relayed claim with no supporting detail." }[g]) + "</div></div>"; }).join("");
+    return section("grading", "How grading works", text("Every report gets an evidence grade from 1 to 5, computed automatically from what its record contains: no AI and no human judgement. The highest level the record supports is used, then it drops one step for each missing basic: a second-hand account whose original was not opened, no sighting date, or no location. It never goes below 1. Missing information always lowers a grade; nothing is assumed.") +
+      '<div class="rows">' + rows5 + "</div>" + text("The grade measures how well a report is documented, not what the object was. An official identification (for example 'it was Starlink') is strong documentation of an ordinary explanation. Each record lists the exact reasons for its grade. Use the Evidence grade filter on the Map and Archive tabs to show stronger reports only."), "grading") +
+      section("skyhow", "What Sky Check covers", text("For reports with a recorded sighting time and place, the sweep checks what was in the sky then: Starlink and other bright satellites including the ISS (CelesTrak orbit data; only within 14 days of that data, and only when the location is precise enough), rocket launches within 1,600 km from 3 hours before to 1 hour after (Launch Library 2), the Sun, Moon and bright planets (JPL ephemeris), and active major meteor showers. Results are possible explanations to compare with the account, never verdicts.") +
+        text("Not checked: aircraft (no free historical flight data without a login), satellite re-entries (no free source of times and tracks), weather, balloons, drones and lasers. If the sighting time or place was not reported, Sky Check says so instead of guessing. Times are America/Denver (MST)."), "skyhow");
   }
 
   // ------------------------------------------------------------------ record reader
@@ -366,6 +396,7 @@
       '<div class="row g10"><span style="width:10px;height:10px;border-radius:999px;flex-shrink:0;display:inline-block;' + (e ? "background:" + markerColor(e.marker) : "border:2px solid " + CYAN) + '"></span><strong>' + esc(e ? reporterLabel(e) : "Context only · OSINT / military context") + "</strong>" + (e ? "<span>" + esc(shortShape(e.shape)) + "</span>" : "") + (e && e.historical ? "<strong>HISTORICAL</strong>" : "") + "</div>" +
       "<p>" + esc(e ? reportAvailability(e) : "Context is not a sighting, craft confirmation or proof of a relationship.") + "</p>" +
       '<div class="row g10">' + (canLocate ? '<button type="button" class="control" data-action="locate" data-arg="' + esc(id) + '">Locate on 24h map</button>' : "") + "<span>One shared reader · links open separately</span></div>" +
+      (e ? gradeBlock(e) + skyBlock(e) : "") +
       (e && e.origin === "auto" && e.title !== e.label ? '<h3>Headline</h3><p style="margin:0 0 12px">' + esc(e.title) + "</p>" : "") +
       '<h3>Reported account</h3><p style="margin:0 0 12px">' + esc(x.narrative || "No account text captured; open the source.") + "</p>" +
       (e && e.explanations.length ? det("d-expl|" + id, "Competing explanations", "<ul>" + e.explanations.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>") : "") +
@@ -394,7 +425,7 @@
     else if (activeId) { var el = document.getElementById(activeId); if (el) { el.focus({ preventScroll: true }); if (selStart !== null && el.setSelectionRange) { try { el.setSelectionRange(selStart, selEnd); } catch (err) { } } } }
   }
   function openRecord(id) { var x = findAny(id); if (!x) return; if (REPORTS.indexOf(x) >= 0) S.selectedId = id; S.detailId = id; S.globalQuery = ""; render({ focusClose: true }); }
-  function resetDb() { S.query = ""; S.reporterFilter = "all"; S.markerFilter = "all"; S.countryFilter = "all"; S.continentFilter = "all"; S.shapeFolder = "all"; S.sortOrder = "newest"; S.regionQuery = ""; S.dateMode = "swept"; S.fromDate = ""; S.toDate = ""; S.onlyMedia = false; }
+  function resetDb() { S.query = ""; S.reporterFilter = "all"; S.markerFilter = "all"; S.countryFilter = "all"; S.continentFilter = "all"; S.shapeFolder = "all"; S.sortOrder = "newest"; S.regionQuery = ""; S.dateMode = "swept"; S.fromDate = ""; S.toDate = ""; S.onlyMedia = false; S.minGrade = "1"; }
 
   app.addEventListener("click", function (ev) {
     var t = ev.target.closest("[data-open],[data-action]");
@@ -404,7 +435,8 @@
     if (a === "tab") { S.tab = arg; render({ focusTab: t.getAttribute("role") === "tab" }); if (t.getAttribute("role") !== "tab") window.scrollTo(0, 0); return; }
     if (a === "seg") { var k = t.getAttribute("data-key"); S[k] = arg; if (k === "continentFilter") S.countryFilter = "all"; render(); return; }
     if (a === "toggle") { if (arg.indexOf("layer:") === 0) { var L = arg.slice(6); S.layers[L] = !S.layers[L]; } else S[arg] = !S[arg]; render(); return; }
-    if (a === "resetMap") { S.layers = { red: true, blue: true, yellow: true, context: true }; S.view = "overview"; S.focusId = ""; S.mapNonce++; render(); return; }
+    if (a === "resetMap") { S.layers = { red: true, blue: true, yellow: true, context: true }; S.minGrade = "1"; S.view = "overview"; S.focusId = ""; S.mapNonce++; render(); return; }
+    if (a === "howGrading") { S.tab = "health"; S.detailId = ""; openDetails["grading"] = true; openDetails["skyhow"] = arg === "sky"; if (arg === "sky") openDetails["grading"] = false; render(); var g = document.getElementById(arg === "sky" ? "skyhow" : "grading"); if (g) g.scrollIntoView({ block: "start" }); return; }
     if (a === "more") { S.latestLimit += 12; render(); return; }
     if (a === "resetDb") { resetDb(); render(); return; }
     if (a === "shapeFolder") { S.shapeFolder = arg; S.tab = "archive"; render(); window.scrollTo(0, 0); return; }
@@ -448,6 +480,11 @@
     REPORTS = all.filter(function (e) { return e.kind !== "context"; });
     CONTEXTS = all.filter(function (e) { return e.kind === "context"; });
     S.selectedId = (REPORTS[0] || {}).id || "";
+    // optional deep links: #tab=archive&grade=4 or #r=<report id>
+    var h = {}; (location.hash || "").replace(/^#/, "").split("&").forEach(function (kv) { var p = kv.split("="); if (p[0]) h[p[0]] = decodeURIComponent(p[1] || ""); });
+    if (h.grade && /^[1-5]$/.test(h.grade)) S.minGrade = h.grade;
+    if (h.tab && TABS.some(function (t) { return t.id === h.tab; })) S.tab = h.tab;
     render();
+    if (h.r && findAny(h.r)) openRecord(h.r);
   }).catch(function (err) { app.innerHTML = '<p class="warn">Could not load the archive (' + esc(err.message) + "). Try reloading the page.</p>"; });
 })();

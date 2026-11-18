@@ -29,6 +29,12 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -r requirements.txt
+      - name: Cache Sky Check data (ephemeris, TLEs, launches)
+        uses: actions/cache@v4
+        with:
+          path: .cache/sky
+          key: sky-data-${{ github.run_id }}
+          restore-keys: sky-data-
       - name: Sweep public sources (no AI, no keys)
         run: python scraper/sweep.py
       - name: Commit updated archive

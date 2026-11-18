@@ -10,6 +10,8 @@ variables:
   WNTR_TIME_BUDGET: "180"
   WNTR_NOMINATIM_CAP: "10"
   WNTR_LINKCHECK_CAP: "25"
+  WNTR_SKY_CAP: "300"
+  WNTR_SKY_BUDGET: "120"
   GIT_DEPTH: "1"
 
 pages:
@@ -17,9 +19,14 @@ pages:
   interruptible: true
   resource_group: pages
   cache:
-    key: pip-py312-v1
-    paths:
-      - .cache/pip
+    - key: pip-py312-v2
+      paths:
+        - .cache/pip
+    # Sky Check data: JPL ephemeris (17 MB, downloaded once), CelesTrak TLEs and Launch Library 2 results
+    # (re-downloaded at most every ~10-12 h by the script itself)
+    - key: sky-data-v1
+      paths:
+        - .cache/sky
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web"

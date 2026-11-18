@@ -20,7 +20,8 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sources as S
-from classify import classify, clean, CONTEXT, _any
+from classify import clean, _any, assess, EXCLUDE, UFO, SCREEN_VERSION
+import witness_sources as W
 from geo import Gazetteer, haversine
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +42,7 @@ TIME_BUDGET = float(os.environ.get("WNTR_TIME_BUDGET", "180"))   # seconds for t
 WORKERS = int(os.environ.get("WNTR_WORKERS", "16"))
 LINKCHECK_CAP = int(os.environ.get("WNTR_LINKCHECK_CAP", "25"))
 # max simultaneous requests per site family (be polite; Reddit and Mastodon rate-limit hard)
-FAMILY_LIMIT = {"Google News": 8, "Bing News": 6, "Reddit": 1, "Mastodon": 2, "UFO Meldpunt Nederland": 3}
+FAMILY_LIMIT = {"Google News": 8, "Bing News": 6, "Reddit": 1, "Mastodon": 2, "UFO Meldpunt Nederland": 3, "Aliens.co.il": 2, "Probed": 1, "UFO Hunters": 1, "MUFON": 1}
 _sems = {}
 
 def stat(family, **kw):
@@ -108,7 +109,11 @@ def norm_url(u):
         p = urlparse(u.strip())
         q = "&".join(x for x in p.query.split("&") if x and not re.match(r"(utm_|fbclid|gclid|ocid|cmpid|ref=)", x))
         host = p.netloc.lower().removeprefix("www.").removeprefix("m.").removeprefix("old.")
-        return urlunparse(("", host, p.path.rstrip("/"), "", q, ""))[2:]
+        frag = p.fragment if p.fragment.startswith("case-") else ""   # MUFON list rows share one page
+        rc = re.search(r"/comments/([a-z0-9]+)", p.path) if host.endswith("reddit.com") else None
+        if rc:   # one Reddit post = one key, whatever slug/subdomain a relay used
+            return "reddit.com/comments/" + rc.group(1)
+        return urlunparse(("", host, p.path.rstrip("/"), "", q, frag))[2:]
     except Exception:
         return u
 
@@ -191,6 +196,11 @@ def fetch_tasks(quick, known):
     tasks += [("Specialist UFO news RSS", lambda n=n, u=u: feed_items({"url": u, "edition": n}, "Specialist UFO news RSS", raw_name=n))
               for n, u in S.EXTRA_RSS]
     tasks.append(("UFO Meldpunt Nederland", lambda: fetch_meldpunt(known)))
+    # witness-report databases the Grok Page relies on
+    tasks.append(("Probed", lambda: W.fetch_probed(get, stat)))
+    tasks.append(("Aliens.co.il", lambda: W.fetch_aliens(get, stat, known, norm_url)))
+    tasks.append(("UFO Hunters", lambda: W.fetch_ufo_hunters(get, stat)))
+    tasks.append(("MUFON", lambda: W.fetch_mufon(get, stat)))
     # interleave families so a time-budget cut never starves one whole source family
     fams = {}
     for t in tasks:
@@ -401,6 +411,194 @@ def flap_watch(reports, radius_km=150, hours=72, min_sources=3, lookback_days=10
                     "Groups where most titles retell one story (same distinctive word) are set aside as one event, not a flap. This is a screening rule, not proof that anything unusual happened; one widely syndicated story can still trip it, so read the sources.",
             "summary": None if not clusters else f"{len(clusters)} cluster(s) met the rule; largest: {clusters[0]['reports']} reports near {', '.join(clusters[0]['places'][:3])}."}
 
+
+# ---------------------------------------------------------------- screening helpers (Grok-Page-equivalent rules)
+EXCLUDED = os.path.join(ROOT, "docs", "data", "excluded.json")
+SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed-grok.json")
+EXCLUDED_CAP = 2500
+
+def make_src(it, url, pub, relay=False):
+    role = "original report" if (it.get("structured") or it["family"] in ("Reddit", "UFO Meldpunt Nederland")) else "media report"
+    if relay and role == "media report":
+        role = "media republish"
+    return {"name": it.get("publisher") or domain(url), "url": url, "published": iso(pub), "role": role,
+            "title": it["title"][:200], "via": it["family"] + (f" / {it['edition']}" if it.get("edition") else ""), "accessed": NOW_ISO,
+            "availability": {"status": "available", "lastCheckedAt": NOW_ISO, "httpStatus": 200, "reason": "listed in feed at sweep time"}}
+
+PERSON_OF = re.compile(r"\b[A-Z][a-z]+ [A-Z][a-z]+(?:, | )(?:of|from|de|da|di|aus|van)\b")
+
+def place_text(it):
+    """Title + summary without the publisher's name (Google News appends it) and without 'Firstname Lastname, of' person names."""
+    t = it.get("title", "") + ". " + (it.get("summary") or "")
+    pub = (it.get("publisher") or "").strip()
+    if pub and len(pub) > 2:
+        t = t.replace(pub, " ")
+    return PERSON_OF.sub(lambda m: m.group(0).split()[-1], t)
+
+GENERIC = set("object objects mysterious mystery strange spotted filmed captured sighted sighting sightings bizarre unidentified video footage lights flying "
+              "military airbase report reported witness witnesses objeto misterioso extraño captan avistamiento oggetto misterioso avvistato".split())
+
+def same_event(a_toks, a_lat, a_lon, r):
+    """Same story at the same place (within 60 km): overlapping title words, or one shared distinctive word (e.g. 'jellyfish')."""
+    if a_lat is None or r.get("lat") is None:
+        return False
+    if haversine(a_lat, a_lon, r["lat"], r["lon"]) > 60:
+        return False
+    rt = r.get("_toks") or tokens(r.get("title"))
+    if jacc(a_toks, rt) >= 0.15:
+        return True
+    pw = tokens(r.get("place") or "")
+    return any(len(w) >= 6 and w not in GENERIC and w not in pw for w in (a_toks & rt))
+
+def locate_item(gaz, it):
+    hint = it.get("place_hint")
+    place = None
+    if hint:
+        place = gaz.locate(hint, it.get("region"))
+        if not place and it.get("probed_lat") is None:
+            place = gaz.locate(hint + ".", it.get("region"))
+    if it.get("probed_lat") is not None and it.get("probed_lon") is not None:
+        plat, plon = float(it["probed_lat"]), float(it["probed_lon"])
+        if place and haversine(place["lat"], place["lon"], plat, plon) <= 150:
+            return place
+        p = dict(place) if place and haversine(place["lat"], place["lon"], plat, plon) <= 1500 else {}
+        p.update({"lat": round(plat, 4), "lon": round(plon, 4), "place": hint or p.get("place") or "location named in post",
+                  "precision": f"approximate: Probed.space geocode of the place named in the post ('{hint}'); not a witness-provided position", "gid": None})
+        return p
+    if not place:
+        place = gaz.locate(place_text(it), it.get("region"))
+    return place
+
+def appearance_of(it, summary):
+    st = it.get("structured") or {}
+    bits = []
+    if st.get("shape"):
+        bits.append(f"Shape: {st['shape']}")
+    if st.get("witness_count"):
+        bits.append(f"{st['witness_count']} witness(es) per post")
+    if st.get("duration_s"):
+        bits.append(f"duration about {round(st['duration_s'] / 60)} min per post" if st["duration_s"] >= 60 else f"duration about {st['duration_s']} s per post")
+    lead = re.split(r"(?<=[.!?])\s", summary or "", maxsplit=1)[0][:240]
+    return "; ".join(bits + ([lead] if lead else [])) or None
+
+def screening_record(a):
+    return {"rules": "v%d Grok-Page-equivalent screening" % SCREEN_VERSION, "decision": a["decision"], "score": a.get("score"),
+            "sourceTier": a.get("tierBasis"), "reasons": a.get("reasons", [])[:8], "at": NOW_ISO}
+
+def load_excluded():
+    if os.path.exists(EXCLUDED):
+        try:
+            with open(EXCLUDED, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"about": "Items the automatic sweep read but did NOT log as sightings, with the rule reasons. Kept so nothing is silently lost; not shown on the map.",
+            "items": []}
+
+def log_excluded(ex, it, url, pub, a, record=None):
+    e = {"title": (it.get("title") or "")[:220], "url": url, "publisher": it.get("publisher") or domain(url), "published": iso(pub) if pub else it.get("publishedAt"),
+         "family": it.get("family") or it.get("feed"), "decision": "excluded", "score": a.get("score"), "reasons": a.get("reasons", [])[:8], "excludedAt": NOW_ISO}
+    if record is not None:
+        e["formerRecord"] = record
+    ex["items"].insert(0, e)
+
+def save_excluded(ex):
+    ex["items"] = ex["items"][:EXCLUDED_CAP]
+    ex["updatedAt"] = NOW_ISO
+    ex["rules"] = RULES_TEXT
+    tmp = EXCLUDED + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(ex, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp, EXCLUDED)
+
+RULES_TEXT = ("Same inclusion rule as the Grok Page: log only a concrete, newly reported sighting - a described observation (lights, shape, motion) "
+              "with a first-hand witness, a witness-report database entry, or local media relaying a resident's report or footage - tied to a place. "
+              "Not logged: general UFO news, politics/disclosure/hearings, declassified files, documentaries/TV/podcasts, explainers and questions, "
+              "opinion/theories, listicles, events/talks, and anything that mentions only past years (historical rehash). Military exercises, launches, "
+              "re-entries and airspace closures are context rings only, never proof. Witness databases rank above news; aggregator/entertainment sites "
+              "need much stronger signals. Duplicates and reposts are merged as extra sources.")
+
+def rescreen(reports, excluded, gaz):
+    """Apply the current rules to automatic records from older sweeps (idempotent). Hand-reviewed seed records are kept as-is."""
+    kept, out_n, changed, into_seed = [], 0, 0, 0
+    seed_keys = {norm_url(s.get("url", "")) for r in reports if r.get("origin") == "seed" for s in r.get("sources", []) if s.get("url")}
+    seed_keys.discard("")
+    for r in reports:
+        if r.get("origin") == "auto" and any(norm_url(s.get("url", "")) in seed_keys for s in r.get("sources", []) if s.get("url")):
+            into_seed += 1   # same report already in the hand-reviewed Grok Page records: keep the reviewed one
+            continue
+        if r.get("origin") != "auto" or r.get("screenVersion") == SCREEN_VERSION:
+            kept.append(r)
+            continue
+        s0 = (r.get("sources") or [{}])[0]
+        fam = (r.get("feed") or "").split(" / ")[0]
+        # re-check automatic geocodes against the cleaned text (publisher names and person names caused bad dots)
+        if r.get("lat") is not None and r.get("place"):
+            m = re.search(r"match on '([^']+)'", r.get("precision") or "")
+            clean_t = place_text({"title": r.get("title", ""), "summary": r.get("summary", ""), "publisher": s0.get("name", "")})
+            if m and m.group(1) not in clean_t:
+                for k in ("lat", "lon", "place", "country", "continent", "gid"):
+                    r[k] = None
+                r["precision"] = "no reliable location in source text; earlier automatic placement removed (matched a publisher or person name)"
+        place = {"precision": r.get("precision") or "", "gid": r.get("gid")} if r.get("lat") is not None else None
+        st = {"is_report": True} if fam in ("UFO Meldpunt Nederland", "Probed", "Aliens.co.il", "UFO Hunters", "MUFON") else {}
+        a = assess(r.get("title", ""), r.get("summary", ""), publisher=s0.get("name", ""), url=s0.get("url", ""), family=fam, place=place,
+                   now_year=NOW.year, structured=st)
+        if a["decision"] == "exclude":
+            log_excluded(excluded, {"title": r.get("title"), "publisher": s0.get("name"), "family": fam, "publishedAt": r.get("publishedAt")},
+                         s0.get("url"), None, a, record={k: r[k] for k in ("id", "kind", "marker", "sweptAt", "place", "lat", "lon", "sources") if k in r})
+            out_n += 1
+            continue
+        r["kind"] = "sighting" if a["decision"] == "sighting" else "context"
+        r["marker"], r["markerBasis"] = a["marker"], a["basis"] + " (re-screened)"
+        if r["kind"] == "sighting":
+            r["evidence"] = a.get("evidence")
+        r["screening"], r["screenVersion"] = screening_record(a), SCREEN_VERSION
+        changed += 1
+        kept.append(r)
+    # merge older duplicates of one story at one place (same rule the sweep uses for new items)
+    final, merged = [], 0
+    for r in kept:
+        hit = None
+        if r.get("origin") == "auto" and r.get("lat") is not None:
+            tk = tokens(r.get("title"))
+            for f in final:
+                if f.get("origin") == "auto" and f.get("kind") == r.get("kind") and same_event(tk, r["lat"], r["lon"], f) and \
+                        abs((parse_time(f) or NOW) - (parse_time(r) or NOW)) <= timedelta(days=7):
+                    hit = f
+                    break
+        if hit:
+            have = {norm_url(s.get("url", "")) for s in hit["sources"]}
+            for s in r.get("sources", []):
+                if norm_url(s.get("url", "")) not in have:
+                    s = dict(s); s["role"] = "media republish" if s.get("role") == "media report" else s.get("role")
+                    hit["sources"].append(s)
+            merged += 1
+            continue
+        final.append(r)
+    return final, {"excluded": out_n, "reclassified": changed, "mergedDuplicates": merged, "sameAsReviewedRecord": into_seed}
+
+def sync_seed(reports):
+    """Add hand-reviewed Grok Page records (scraper/seed-grok.json) that the archive lacks; refresh seed records in place."""
+    if not os.path.exists(SEED):
+        return 0
+    with open(SEED, encoding="utf-8") as f:
+        seed = json.load(f).get("reports", [])
+    idx = {r["id"]: i for i, r in enumerate(reports)}
+    n = 0
+    for s in seed:
+        if s["id"] in idx:
+            old = reports[idx[s["id"]]]
+            if old.get("origin") == "seed":
+                av = {norm_url(x.get("url", "")): x.get("availability") for x in old.get("sources", [])}
+                for x in s.get("sources", []):   # keep link-check history
+                    if av.get(norm_url(x.get("url", ""))):
+                        x["availability"] = av[norm_url(x.get("url", ""))]
+                reports[idx[s["id"]]] = s
+        else:
+            reports.append(s); n += 1
+    return n
+
 # ---------------------------------------------------------------- main
 def load():
     if os.path.exists(DATA):
@@ -412,96 +610,123 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--no-linkcheck", action="store_true")
+    ap.add_argument("--no-fetch", action="store_true", help="only apply seed sync + re-screening (testing)")
     args = ap.parse_args()
     os.makedirs(STATE, exist_ok=True)
     db = load()
     reports = db.get("reports", [])
+    gaz = Gazetteer(os.path.join(STATE, "geocache.json"), nominatim_cap=int(os.environ.get("WNTR_NOMINATIM_CAP", "10")), user_agent=UA)
+    excluded = load_excluded()
+    seed_added = sync_seed(reports)
+    reports, rescreen_stats = rescreen(reports, excluded, gaz)
+    print(f"seed records added: {seed_added}; re-screen: {rescreen_stats}", flush=True)
+    excluded_urls = {norm_url(e["url"]) for e in excluded["items"] if e.get("url")}
     by_id = {r["id"]: r for r in reports}
     known = {}
     for r in reports:
         for s in r.get("sources", []):
             if s.get("url"):
                 known[norm_url(s["url"])] = r["id"]
-    gaz = Gazetteer(os.path.join(STATE, "geocache.json"), nominatim_cap=int(os.environ.get("WNTR_NOMINATIM_CAP", "10")), user_agent=UA)
 
-    tasks = fetch_tasks(args.quick, known)
+    tasks = [] if args.no_fetch else fetch_tasks(args.quick, known)
     print(f"Fetching {len(tasks)} source requests with {WORKERS} workers, budget {TIME_BUDGET:.0f}s", flush=True)
     raw = run_fetch(tasks)
     print(f"Fetch phase done in {time.time() - T0:.0f}s, {len(raw)} raw items", flush=True)
 
-    recent = [r for r in reports if (r.get("sweptAt") or "") >= iso(NOW - timedelta(days=7))[:10]]
+    recent = [r for r in reports if r.get("kind") in ("sighting", "context") and (r.get("sweptAt") or "") >= iso(NOW - timedelta(days=7))[:10]]
     added = merged = skipped_old = dropped = 0
     for it in raw:
         url = it.get("url")
         if not url or not it.get("title"):
             continue
         key = norm_url(url)
-        if key in known:
+        alt = norm_url(it["alt_url"]) if it.get("alt_url") else None
+        if key in known or key in excluded_urls:
+            continue
+        if alt and alt in known:   # same witness post already logged via another relay -> add this relay as a source
+            dup = by_id.get(known[alt])
+            if dup is not None and not any(norm_url(s["url"]) == key for s in dup["sources"]):
+                dup["sources"].append(make_src(it, url, it.get("published"), relay=True))
+                known[key] = dup["id"]; merged += 1
             continue
         pub = it.get("published")
         if pub and NOW - pub > timedelta(days=MAX_AGE_DAYS):
             skipped_old += 1
             continue
         title, summary = it["title"], it.get("summary", "")
-        ctext = (("UFO " if it.get("topic_feed") else "") + title + " " + summary)
-        c = classify(ctext, "")
-        if it.get("forced_kind") and not c:
-            c = ("sighting", "red", "Witness report on a civilian UFO reporting site; not verified")
-        if not c:
+        ctext = (title + " . " + summary).lower()
+        # cheap pre-filter before geocoding: off-topic/entertainment, or no UFO wording on a general news feed
+        if _any(EXCLUDE, ctext) or (not _any(UFO, ctext) and not it.get("structured") and it["family"] not in ("UFO Meldpunt Nederland",)):
             dropped += 1
             continue
-        kind, marker, basis = c
-        if it.get("topic_feed") and it["family"] in ("Reddit", "Mastodon") and kind == "context":
-            dropped += 1  # social chatter without a described sighting
-            continue
         toks = tokens(title)
-        src = {"name": it.get("publisher") or domain(url), "url": url, "published": iso(pub), "role": "original report" if it.get("forced_kind") or it["family"] in ("Reddit", "Mastodon") else "media report",
-               "title": title[:200], "via": f"{it['family']}" + (f" / {it['edition']}" if it.get("edition") else ""), "accessed": NOW_ISO,
-               "availability": {"status": "available", "lastCheckedAt": NOW_ISO, "httpStatus": 200, "reason": "listed in feed at sweep time"}}
-        # title-similarity duplicate -> extra source on existing report
         dup = None
         for r in recent:
             if jacc(toks, r.get("_toks") or tokens(r.get("title"))) >= 0.55:
                 dup = r
                 break
-        place = None
-        if not dup:
-            place = gaz.locate(it["place_hint"], "NL") if it.get("place_hint") else None
-            if not place:
-                place = gaz.locate(title + ". " + summary, it.get("region"))
-            if place and place.get("gid"):
-                for r in recent:
-                    if r.get("gid") == place["gid"] and r.get("kind") == kind and jacc(toks, r.get("_toks") or tokens(r.get("title"))) >= 0.15:
-                        dup = r
-                        break
-        years = [int(y) for y in re.findall(r"\b(19[4-9]\d|20[0-4]\d)\b", title + " " + summary)]
-        if kind == "sighting" and years and not it.get("event_local") and max(years) < NOW.year and NOW.year not in years:
-            kind, marker, basis = "context", "cyan", f"Mentions only older year(s) ({max(years)}); likely a historical or resurfaced case, not a new sighting (keyword rule)"
-        if not dup and kind == "sighting" and not place and _any(CONTEXT, ctext.lower()):
-            kind, marker, basis = "context", "cyan", "OSINT/context: official/political UFO news with no local sighting place (keyword rule)"
-        if dup:
+        structured = dict(it.get("structured") or {})
+        if it["family"] == "UFO Meldpunt Nederland":
+            structured["is_report"] = True
+        # screen once assuming the best case (a precise place); only geocode items that could still qualify
+        a0 = assess(title, summary, publisher=it.get("publisher") or domain(url), url=url, family=it["family"],
+                    place={"precision": "city", "gid": "probe"}, now_year=NOW.year, structured=structured)
+        if a0["decision"] == "exclude" and dup is None:
+            a0["reasons"] = [x for x in a0["reasons"] if x != "named place"]
+            log_excluded(excluded, it, url, pub, a0)
+            excluded_urls.add(key)
+            dropped += 1
+            continue
+        place = None if dup else locate_item(gaz, it)
+        a = assess(title, summary, publisher=it.get("publisher") or domain(url), url=url, family=it["family"], place=place,
+                   now_year=NOW.year, structured=structured)
+        if dup is None and place and a["decision"] != "exclude":
+            for r in recent:
+                if r.get("kind") == ("sighting" if a["decision"] == "sighting" else "context") and same_event(toks, place["lat"], place["lon"], r):
+                    dup = r
+                    break
+        if dup is not None and a["decision"] != "exclude":
             if not any(norm_url(s["url"]) == key for s in dup["sources"]):
-                src["role"] = "media republish" if src["role"] == "media report" else src["role"]
-                dup["sources"].append(src)
-                if marker == "yellow" and dup.get("marker") == "red":
-                    dup["marker"], dup["markerBasis"] = marker, basis + " (from an added source)"
+                dup["sources"].append(make_src(it, url, pub, relay=True))
+                if a.get("marker") == "yellow" and dup.get("marker") == "red":
+                    dup["marker"], dup["markerBasis"] = "yellow", a["basis"] + " (from an added source)"
             known[key] = dup["id"]
             merged += 1
             continue
+        if a["decision"] == "exclude":
+            log_excluded(excluded, it, url, pub, a)
+            excluded_urls.add(key)
+            dropped += 1
+            continue
+        kind = "sighting" if a["decision"] == "sighting" else "context"
         rid = "auto-" + hashlib.sha1(key.encode()).hexdigest()[:12]
-        rep = {"id": rid, "origin": "auto", "kind": kind, "marker": marker if (place or kind == "context") else marker,
-               "markerBasis": basis, "title": title[:220], "summary": summary[:700],
-               "reporterType": it.get("reporterType", "unknown"), "reporterTypeBasis": "Automated sweep cannot verify who the witness is" if not it.get("reporterType") else "Member of the public on a civilian reporting site",
-               "publishedAt": iso(pub), "eventAt": iso(pub) if it.get("event_local") else None,
-               "eventDate": iso(pub)[:10] if pub else None, "eventTimeLocal": it.get("event_local"),
-               "timeBasis": "Witness-reported sighting time" if it.get("event_local") else "Publication time (sighting time not parsed)",
-               "sweptAt": NOW_ISO, "sources": [src], "feed": src["via"],
+        ev_local = it.get("event_local")
+        rep = {"id": rid, "origin": "auto", "kind": kind, "marker": a["marker"], "markerBasis": a["basis"],
+               "title": title[:220], "summary": summary[:700], "appearance": appearance_of(it, summary) if kind == "sighting" else None,
+               "evidence": a.get("evidence") if kind == "sighting" else "Context item, not a sighting",
+               "screening": screening_record(a), "screenVersion": SCREEN_VERSION,
+               "reporterType": it.get("reporterType", "unknown"),
+               "reporterTypeBasis": "Member of the public on a civilian reporting site" if it.get("reporterType") else "Automated sweep cannot verify who the witness is",
+               "publishedAt": iso(pub), "eventAt": iso(pub) if ev_local and not it.get("event_date") else None,
+               "eventDate": it.get("event_date") or (ev_local[:10] if ev_local and re.match(r"\d{4}-\d\d-\d\d", ev_local) else (iso(pub)[:10] if pub else None)),
+               "eventTimeLocal": ev_local,
+               "timeBasis": "Witness-reported sighting date/time" if ev_local else "Publication time (sighting time not parsed)",
+               "sweptAt": NOW_ISO, "sources": [make_src(it, url, pub)], "feed": it["family"] + (f" / {it['edition']}" if it.get("edition") else ""),
                "lat": place["lat"] if place else None, "lon": place["lon"] if place else None,
-               "place": place["place"] if place else None, "country": place["country"] if place else None,
+               "place": place["place"] if place else None, "country": place.get("country") if place else None,
                "continent": place.get("continent") if place else None, "tz": (place.get("tz") if place else None) or it.get("event_tz"),
                "precision": place["precision"] if place else "no location found in source text; not mapped", "gid": place.get("gid") if place else None}
-        if kind == "context" and rep["lat"] is not None:
-            rep["marker"] = "cyan"
+        if structured.get("shape"):
+            rep["shapeHint"] = structured["shape"]
+        if structured.get("witness_count"):
+            rep["witnessCount"] = structured["witness_count"]
+        if structured.get("probed_context"):
+            rep["explanations"] = ["Probed.space context note: " + x for x in structured["probed_context"][:3]]
+        if it.get("alt_url"):
+            rep["sources"].append({"name": "Original post (as linked by " + it["family"] + ")", "url": it["alt_url"], "role": "original report",
+                                   "via": it["family"], "accessed": NOW_ISO, "note": "Link taken from the relay page; may be blocked to automated readers",
+                                   "availability": {"status": "unchecked"}})
+            known[alt] = rid
         reports.append(rep)
         by_id[rid] = rep
         rep["_toks"] = toks
@@ -534,6 +759,8 @@ def main():
         "reportCount": len(reports),
         "mappedLast24h": sum(1 for r in last24 if r.get("lat") is not None),
         "noLocationCount": sum(1 for r in reports if r.get("lat") is None),
+        "screening": {"version": SCREEN_VERSION, "rules": RULES_TEXT, "excludedLog": "data/excluded.json",
+                      "excludedLogged": len(excluded["items"]), "lastRescreen": rescreen_stats, "seedAddedThisSweep": seed_added},
         "lastSweep": {"rawItems": len(raw), "added": added, "mergedAsExtraSource": merged, "droppedNotRelevant": dropped,
                       "skippedOlderThan7d": skipped_old, "linksChecked": lc[0], "linksNewlyUnavailable": lc[1]},
         "sourcesStatus": list(status.values()),
@@ -541,6 +768,7 @@ def main():
         "sweepSeconds": round(time.time() - T0),
     })
     db = {"meta": meta, "reports": reports, "flapWatch": fw}
+    save_excluded(excluded)
     tmp = DATA + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, separators=(",", ":"))

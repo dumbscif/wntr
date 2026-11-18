@@ -103,8 +103,14 @@ GitHub can start scheduled runs a few minutes to an hour late when its servers a
 
 - GitHub Actions and Pages are free for public repositories. One sweep takes roughly 1.5–3 minutes (fetching is concurrent and capped at 180 seconds).
 - No API keys or accounts are needed besides your GitHub account.
-- Keyword rules aren't perfect: some items will be off-topic, some places wrong or only approximate (a town or a
-  state/region centre). Nothing is verified. Read the linked source.
+- **What gets logged (same rule as the Grok Page):** only concrete, newly reported sightings - a described observation
+  (lights, shape, motion) from a first-hand witness, a witness-report database, or local media relaying a resident's
+  report/footage, tied to a place. Not logged: general UFO news, politics/disclosure/hearings, declassified files,
+  documentaries/TV/podcasts, explainers and questions, opinion/theories, listicles, talks/events, and items that mention
+  only past years. Military exercises, launches, re-entries and airspace closures are cyan context only. Everything left
+  out is listed with its reasons in `docs/data/excluded.json` (the live site serves it at `data/excluded.json`).
+- Rules aren't perfect: some places will be wrong or only approximate (a town or a state/region centre). Nothing is
+  verified. Read the linked source.
 - Some sites block automated reading from cloud servers (NUFORC, Reddit JSON; Reddit RSS is often rate
   limited). The sweep keeps going when a source fails and shows it in **Sources & About**.
 - Google News links open through a Google redirect to the publisher's page.
@@ -119,7 +125,13 @@ scraper/sweep.py              concurrent fetch (16 workers, 10 s timeouts, WNTR_
                               → filter → geocode → classify → dedupe → link check → Flap Watch → docs/data/events.json
 scraper/sources.py            every feed: Google News (60 editions, ~120 queries), Bing News (16 markets), Reddit RSS,
                               Mastodon tags, Open Minds + Liberation Times RSS, UFO Meldpunt Nederland
-scraper/classify.py           multilingual keyword rules for relevance and marker colour
+scraper/witness_sources.py    witness-report databases used by the Grok Page: Probed.space, Aliens.co.il sightings feed,
+                              UFO Hunters, MUFON last-20 (each parser yields nothing rather than guessing if a site changes)
+scraper/classify.py           assess(): Grok-Page-equivalent screening (concrete sighting + place + source tier; rejects
+                              stories/politics/TV/explainers/listicles/historical; context-only OSINT) and marker colour
+scraper/seed-grok.json        hand-reviewed Grok Page records, merged into the archive by every sweep (refresh by
+                              re-exporting from the Grok Page state)
+docs/data/excluded.json       what the sweep read but did not log, with reasons (capped at 2,500 newest)
 scraper/geo.py                offline GeoNames gazetteer (cities5000 + admin1), native-script names, optional Nominatim
                               fallback (≤10 lookups/run, 1 req/s, cached in state/geocache.json; WNTR_NO_NOMINATIM=1 disables)
 scraper/import_seed.py        one-time import of the hand-reviewed Nov 2026 archive

@@ -92,5 +92,7 @@ MASTODON_TAGS = ["ufo", "uap", "ufosighting", "ufos"]
 EXTRA_RSS = [
     ("Open Minds UFO News", "https://www.openminds.tv/feed"),
     ("Liberation Times", "https://www.liberationtimes.com/home?format=rss"),
+    ("BUFORA", "https://www.bufora.org.uk/blog-feed.xml"),
+    ("Fenomenum (Brazil)", "https://www.fenomenum.com.br/feed"),
 ]
 MELDPUNT_HOME = "https://www.ufomeldpunt.nl/"

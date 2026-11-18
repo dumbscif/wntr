@@ -141,9 +141,10 @@ the project subpath `https://USER.github.io/wntr/`.
 scraper/sweep.py              concurrent fetch (16 workers, 10 s timeouts, WNTR_TIME_BUDGET=180 s; skipped sources logged)
                               → filter → geocode → classify → dedupe → link check → Flap Watch → docs/data/events.json
 scraper/sources.py            every feed: Google News (60 editions, ~120 queries), Bing News (16 markets), Reddit RSS,
-                              Mastodon tags, Open Minds + Liberation Times RSS, UFO Meldpunt Nederland
-scraper/witness_sources.py    witness-report databases used by the Grok Page: Probed.space, Aliens.co.il sightings feed,
-                              UFO Hunters, MUFON last-20 (each parser yields nothing rather than guessing if a site changes)
+                              Mastodon tags, Open Minds + Liberation Times + BUFORA + Fenomenum RSS, UFO Meldpunt Nederland
+scraper/witness_sources.py    witness-report databases: Probed.space, Aliens.co.il, UFO Hunters, MUFON last-20,
+                              UFO*BC recent listings, GEIPAN public case list, YouTube yt-dlp ytsearch
+                              (each parser yields nothing rather than guessing if a site changes; CF/WAF 403s are not bypassed)
 scraper/grading.py            evidence grade 1-5 with reasons (deterministic, record data only)
 scraper/gate.py               admission gate: require a reported location; grade <= 2 also needs two
                               independent reports. Failing sightings go to docs/data/excluded.json

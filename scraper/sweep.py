@@ -45,7 +45,7 @@ TIME_BUDGET = float(os.environ.get("WNTR_TIME_BUDGET", "180"))   # seconds for t
 WORKERS = int(os.environ.get("WNTR_WORKERS", "16"))
 LINKCHECK_CAP = int(os.environ.get("WNTR_LINKCHECK_CAP", "25"))
 # max simultaneous requests per site family (be polite; Reddit and Mastodon rate-limit hard)
-FAMILY_LIMIT = {"Google News": 8, "Bing News": 6, "Reddit": 1, "Mastodon": 2, "UFO Meldpunt Nederland": 3, "Aliens.co.il": 2, "Probed": 1, "UFO Hunters": 1, "MUFON": 1}
+FAMILY_LIMIT = {"Google News": 8, "Bing News": 6, "Reddit": 1, "Mastodon": 2, "UFO Meldpunt Nederland": 3, "Aliens.co.il": 2, "Probed": 1, "UFO Hunters": 1, "MUFON": 1, "UFO*BC": 1, "GEIPAN": 1, "YouTube": 1, "Specialist UFO news RSS": 4}
 _sems = {}
 
 def stat(family, **kw):
@@ -204,9 +204,12 @@ def fetch_tasks(quick, known):
     tasks.append(("Aliens.co.il", lambda: W.fetch_aliens(get, stat, known, norm_url)))
     tasks.append(("UFO Hunters", lambda: W.fetch_ufo_hunters(get, stat)))
     tasks.append(("MUFON", lambda: W.fetch_mufon(get, stat)))
+    tasks.append(("UFO*BC", lambda: W.fetch_ufobc(get, stat)))
+    tasks.append(("GEIPAN", lambda: W.fetch_geipan(get, stat)))
+    tasks.append(("YouTube", lambda: W.fetch_youtube(stat)))
     # Witness-report databases first (often have media / first-hand accounts), then
     # interleave the rest so a time-budget cut never starves one whole source family.
-    priority = ("UFO Meldpunt Nederland", "Probed", "Aliens.co.il", "UFO Hunters", "MUFON")
+    priority = ("UFO Meldpunt Nederland", "Probed", "Aliens.co.il", "UFO Hunters", "MUFON", "UFO*BC", "GEIPAN", "YouTube")
     first = [x for x in tasks if x[0] in priority]
     rest = [x for x in tasks if x[0] not in priority]
     fams = {}
@@ -721,7 +724,7 @@ def main():
         title, summary = it["title"], it.get("summary", "")
         ctext = (title + " . " + summary).lower()
         # cheap pre-filter before geocoding: off-topic/entertainment, or no UFO wording on a general news feed
-        if _any(EXCLUDE, ctext) or (not _any(UFO, ctext) and not it.get("structured") and it["family"] not in ("UFO Meldpunt Nederland",)):
+        if _any(EXCLUDE, ctext) or (not _any(UFO, ctext) and not it.get("structured") and it["family"] not in ("UFO Meldpunt Nederland", "UFO*BC", "GEIPAN")):
             dropped += 1
             continue
         toks = tokens(title)

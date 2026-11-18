@@ -158,3 +158,251 @@ def fetch_mufon(get, stat):
                     "topic_feed": True, "place_hint": f"{city}, {region}", "event_local": ev, "event_date": ev, "reporterType": "civilian",
                     "structured": {"is_report": True, "media": media}})
     return out
+
+
+# --- added 2026-11-18: vital-source expansion (public pages/feeds only) ---
+
+_MONTH = {m: i for i, m in enumerate(
+    "january february march april may june july august september october november december".split(), 1)}
+_MONTH.update({m[:3]: i for m, i in list(_MONTH.items())})
+_MONTH["sept"] = 9
+
+def _parse_day_mon_year(s):
+    m = re.search(r"(\d{1,2})[-/\s]+([A-Za-z]{3,9})[-/\s]+(\d{4})", s or "")
+    if not m:
+        return None
+    mon = _MONTH.get(m.group(2).lower())
+    if not mon:
+        return None
+    try:
+        return datetime(int(m.group(3)), mon, int(m.group(1)), 12, 0, tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+def _strip_html(chunk):
+    s = re.sub(r"<script.*?</script>|<style.*?</style>", " ", chunk, flags=re.S | re.I)
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = html.unescape(re.sub(r"\s+", " ", s)).strip()
+    return s
+
+def parse_ufobc(text):
+    """Parse UFO*BC recent_v2.htm listing (FrontPage HTML; reports share one page)."""
+    out = []
+    pat = re.compile(r"Reported\s+(\d{1,2}[-/\s]+[A-Za-z]{3,9}[-/\s]+\d{4})", re.I)
+    matches = list(pat.finditer(text))
+    for i, m in enumerate(matches):
+        submitted = _parse_day_mon_year(m.group(1))
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body_html = text[m.end():end]
+        body = _strip_html(body_html)
+        # "26-Sept-2026, Cranbrook, BC : (Nighttime)" or "Winter 1993, Surrey BC"
+        head = body[:240]
+        ev, place = None, None
+        hm = re.match(
+            r"[:\s]*((?:(?:Early|Mid|Late|Winter|Spring|Summer|Fall|Autumn)[-\s]+)*"
+            r"(?:\d{1,2}[-/\s]+[A-Za-z]{3,9}[-/\s]+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|[A-Za-z]{3,9}[-/\s,]+\d{4}|\d{4}))"
+            r"(?:,\s*([^:]{3,80}))?",
+            head, re.I)
+        if hm:
+            ev = re.sub(r"\s+", " ", hm.group(1)).strip()
+            place = (hm.group(2) or "").split(":")[0].strip(" .") or None
+        if place and not re.search(r"\b(Canada|BC|AB|SK|MB|ON|QC|NS|NB|PE|NL|YT|NT|NU|British Columbia|Alberta|Ontario|Quebec)\b", place, re.I):
+            place = place + ", British Columbia, Canada"
+        elif place and "Canada" not in place:
+            place = place + ", Canada"
+        media = bool(re.search(r"\.(?:jpe?g|png|gif|webp|mp4|mov|m4v|avi)(?:\b|\")", body_html, re.I))
+        slug_src = (place or ev or m.group(1) or str(i)).lower()
+        slug = re.sub(r"[^a-z0-9]+", "-", slug_src).strip("-")[:48] or str(i)
+        date_key = submitted.strftime("%Y%m%d") if submitted else f"row{i}"
+        url = f"https://www.ufobc.ca/Sightings/recent_v2.htm#case-{date_key}-{slug}"
+        title_place = place or "British Columbia"
+        title = f"UFO*BC report ({title_place})"
+        if ev:
+            title += f", {ev}"
+        out.append({
+            "title": title[:220],
+            "summary": body[:700],
+            "url": url,
+            "published": submitted,
+            "publisher": "UFO*BC (witness report)",
+            "family": "UFO*BC",
+            "edition": "BC",
+            "region": "CA",
+            "topic_feed": True,
+            "place_hint": place,
+            "event_local": ev,
+            "event_date": (ev[:10] if ev and re.match(r"\d{4}-\d\d-\d\d", ev) else (submitted.strftime("%Y-%m-%d") if submitted and not ev else None)),
+            "reporterType": "civilian",
+            "structured": {"is_report": True, "media": media},
+        })
+    return out
+
+def fetch_ufobc(get, stat):
+    fam = "UFO*BC"
+    r = get("https://www.ufobc.ca/Sightings/recent_v2.htm", fam)
+    if not r:
+        return []
+    try:
+        text = r.content.decode("cp1252", errors="replace")
+    except Exception:
+        text = r.text or ""
+    if "Just a moment" in text[:500] or "cf-browser-verification" in text[:2000]:
+        stat(fam, failed=1, error="Cloudflare challenge; listing not parsed")
+        return []
+    out = parse_ufobc(text)
+    stat(fam, items=len(out))
+    return out
+
+def fetch_geipan(get, stat):
+    """Official GEIPAN public case list (HTML search page). Soft-fails on 5xx."""
+    fam = "GEIPAN"
+    pages = [
+        "https://www.cnes-geipan.fr/fr/recherche/cas",
+        "https://cnes-geipan.fr/fr/recherche/cas",
+    ]
+    text = ""
+    for u in pages:
+        r = get(u, fam)
+        if not r:
+            continue
+        text = r.text or ""
+        if "502 Server Error" not in text[:400] and len(text) > 200 and (
+            "Liste des cas" in text or "/cas/" in text
+        ):
+            break
+        text = ""
+    if not text:
+        return []
+    out, seen = [], set()
+    for m in re.finditer(r'href="([^"]*(?:/fr)?/cas/[^"]+)"[^>]*>(.*?)</a>', text, re.S | re.I):
+        href, label = m.group(1), _strip_html(m.group(2))
+        if href.startswith("/"):
+            href = "https://www.cnes-geipan.fr" + href
+        if href in seen:
+            continue
+        seen.add(href)
+        # nearby classification / date / department often sit in the parent block
+        window = text[max(0, m.start() - 200):m.end() + 400]
+        win = _strip_html(window)
+        clas = re.search(r"Classification\s*:\s*([A-D]\d?)", win, re.I)
+        dept = re.search(r"D[ée]partement\s*:\s*([^.]{2,60})", win, re.I)
+        d = re.search(r"(\d{2})[./](\d{2})[./](\d{4})", win)
+        published = None
+        ev = None
+        if d:
+            try:
+                published = datetime(int(d.group(3)), int(d.group(2)), int(d.group(1)), 12, 0, tzinfo=timezone.utc)
+                ev = f"{d.group(3)}-{d.group(2)}-{d.group(1)}"
+            except Exception:
+                pass
+        place = label
+        # "PAPEETE (987) 12.01.2026" -> place Papeete
+        pm = re.match(r"(.+?)\s*(?:\((\d+)\))?\s*(?:\d{2}[./]\d{2}[./]\d{4})?$", label)
+        if pm:
+            place = pm.group(1).strip()
+        if dept:
+            dname = dept.group(1).strip()
+            if dname.lower() not in (place or "").lower():
+                place = f"{place}, {dname}" if place else dname
+        elif place and "France" not in place:
+            place = place + ", France"
+        summary = win[:700]
+        if clas:
+            summary = f"GEIPAN classification {clas.group(1)}. " + summary
+        out.append({
+            "title": f"GEIPAN case: {label}"[:220],
+            "summary": summary,
+            "url": href,
+            "published": published,
+            "publisher": "GEIPAN / CNES (official case file)",
+            "family": fam,
+            "edition": "FR",
+            "region": "FR",
+            "topic_feed": True,
+            "place_hint": place,
+            "event_local": ev,
+            "event_date": ev,
+            "reporterType": "civilian",
+            "structured": {"is_report": True, "media": False, "geipan_class": clas.group(1) if clas else None},
+        })
+        if len(out) >= 30:
+            break
+    stat(fam, items=len(out))
+    return out
+
+def fetch_youtube(stat, cap=8):
+    """Recent sighting videos via yt-dlp ytsearch (no download). Soft-fail if missing or blocked."""
+    import shutil, subprocess, sys
+    fam = "YouTube"
+    exe = shutil.which("yt-dlp")
+    argv_base = None
+    if exe:
+        argv_base = [exe]
+    else:
+        try:
+            import yt_dlp  # noqa: F401
+            argv_base = [sys.executable, "-m", "yt_dlp"]
+        except Exception:
+            stat(fam, skipped=1, error="yt-dlp not installed; YouTube search skipped")
+            return []
+    queries = ["UFO sighting November 2026", "ovni avistamiento video 2026"]
+    out, seen = [], set()
+    for q in queries:
+        argv = argv_base + [
+            "--flat-playlist", "--dump-json", "--no-download", "--no-warnings",
+            "--socket-timeout", "12", "--playlist-end", str(cap),
+            f"ytsearch{cap}:{q}",
+        ]
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=25)
+        except Exception as e:
+            stat(fam, failed=1, error=f"{type(e).__name__}: {e}")
+            continue
+        if proc.returncode != 0 and not proc.stdout.strip():
+            err = (proc.stderr or "yt-dlp failed")[:160]
+            stat(fam, failed=1, error=err)
+            continue
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            vid = o.get("id")
+            if not vid or vid in seen:
+                continue
+            seen.add(vid)
+            title = (o.get("title") or "").strip()
+            if not title:
+                continue
+            url = o.get("url") or o.get("webpage_url") or f"https://www.youtube.com/watch?v={vid}"
+            if url and not url.startswith("http"):
+                url = f"https://www.youtube.com/watch?v={vid}"
+            ch = o.get("channel") or o.get("uploader") or "YouTube"
+            desc = (o.get("description") or "")[:700]
+            published = _dt(o.get("upload_date") or o.get("timestamp") or o.get("release_timestamp"))
+            # yt-dlp upload_date is YYYYMMDD
+            if published is None and o.get("upload_date") and re.match(r"^\d{8}$", str(o["upload_date"])):
+                s = str(o["upload_date"])
+                try:
+                    published = datetime(int(s[:4]), int(s[4:6]), int(s[6:8]), 12, 0, tzinfo=timezone.utc)
+                except Exception:
+                    pass
+            out.append({
+                "title": title[:220],
+                "summary": desc or title,
+                "url": url,
+                "published": published,
+                "publisher": f"YouTube / {ch} (video)",
+                "family": fam,
+                "edition": q,
+                "region": None,
+                "topic_feed": True,
+                "mediaAttached": True,
+                "reporterType": "unknown",
+                "structured": {"media": True},
+            })
+    stat(fam, items=len(out), ok=1 if out else 0)
+    return out

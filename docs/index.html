@@ -6,11 +6,11 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0e0e0e">
 <title>WNTR:\\Project StarFire UFO Sighting Tracker</title>
-<meta name="description" content="Free public archive of sourced UFO/UAP sighting reports worldwide, updated automatically twice a day.">
+<meta name="description" content="Free public archive of sourced UFO/UAP sighting reports worldwide, updated automatically by scheduled sweeps.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="WNTR:\\Project StarFire UFO Sighting Tracker">
 <meta property="og:title" content="WNTR:\\Project StarFire UFO Sighting Tracker">
-<meta property="og:description" content="Free public archive of sourced UFO/UAP sighting reports worldwide, with a live interactive map, updated automatically twice a day.">
+<meta property="og:description" content="Free public archive of sourced UFO/UAP sighting reports worldwide, with a live interactive map, updated automatically by scheduled sweeps.">
 <meta property="og:url" content="https://wntr-e6040b.gitlab.io/">
 <meta property="og:image" content="https://wntr-e6040b.gitlab.io/img/og-1200x630.png">
 <meta property="og:image:width" content="1200">
@@ -24,6 +24,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="img/icon-16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="img/icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="vendor/markercluster/MarkerCluster.css">
 <link rel="stylesheet" href="style.css">
@@ -36,13 +37,16 @@
       <img src="img/banner-wide.png" width="1600" height="400" alt="Project StarFire: UFO reporting tracker, live interactive map">
     </picture>
     <h1 class="page-title">WNTR:\\Project StarFire UFO Sighting Tracker</h1>
-    <p class="page-summary">Public-report archive · updated automatically about 4 AM and 4 PM MST, not a live feed.</p>
+    <p class="page-summary">Public-report archive · updated automatically by scheduled sweeps (last run shown below), not a live feed.</p>
   </div>
   <div id="app" class="watch-accessible"><p class="loading">Loading the archive…</p></div>
 </main>
-<script src="vendor/leaflet/leaflet.js"></script>
-<script src="vendor/markercluster/leaflet.markercluster.js"></script>
-<script src="livemap.js"></script>
+<script src="vendor/maplibre/maplibre-gl.js"></script>
+<script src="globe.js"></script>
+<script>
+/* No WebGL (or ?map=2d): load the Leaflet 2D map instead of the 3D globe. */
+if (!window.WNTRLiveMap) document.write('<script src="vendor/leaflet/leaflet.js"><\/script><script src="vendor/markercluster/leaflet.markercluster.js"><\/script><script src="livemap.js"><\/script>');
+</script>
 <script src="land.js"></script>
 <script src="app.js"></script>
 </body>

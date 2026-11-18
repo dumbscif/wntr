@@ -811,7 +811,7 @@ def main():
         "lastSweep": {"rawItems": len(raw), "added": added, "mergedAsExtraSource": merged, "droppedNotRelevant": dropped,
                       "skippedOlderThan7d": skipped_old, "linksChecked": lc[0], "linksNewlyUnavailable": lc[1]},
         "sourcesStatus": list(status.values()),
-        "schedule": "GitLab pipeline schedules at 4 AM and 4 PM America/Denver" if os.environ.get("GITLAB_CI") else "GitHub Actions cron 11:00 and 23:00 UTC = 4 AM / 4 PM MST (5 AM / 5 PM during MDT)",
+        "schedule": "GitLab pipeline schedules at 4 AM and 4 PM America/Denver" if os.environ.get("GITLAB_CI") else "GitHub Actions cron every hour, on the hour",
         "sweepSeconds": round(time.time() - T0),
     })
     db = {"meta": meta, "reports": reports, "flapWatch": fw}

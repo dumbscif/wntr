@@ -59,6 +59,8 @@ pages:
       PY
     - python scraper/sweep.py
     - rm -rf public && cp -r docs public && mkdir -p public/_state && cp state/* public/_state/
+    # GitLab Pages serves pre-compressed copies when present (the 3D globe library is ~1 MB, ~280 KB gzipped)
+    - find public -type f \( -name '*.js' -o -name '*.css' -o -name '*.json' -o -name '*.html' -o -name '*.pbf' -o -name '*.webmanifest' \) -exec gzip -k -9 {} \;
   artifacts:
     paths:
       - public

@@ -2,11 +2,12 @@ name: Sweep and publish
 
 on:
   schedule:
-    # 11:00 UTC = 4 AM MST, 23:00 UTC = 4 PM MST.
-    # GitHub cron is UTC only, so during daylight time (MDT, Mar-Nov) these run at 5 AM / 5 PM.
-    - cron: "0 11 * * *"
-    - cron: "0 23 * * *"
+    # Every hour, on the hour (GitHub cron is UTC; public repos get free, unlimited Actions minutes).
+    - cron: "0 * * * *"
   workflow_dispatch: {}   # "Run workflow" button = manual sweep
+  push:
+    branches: [main]
+    paths: ["docs/**", "!docs/data/**", "scraper/**", "requirements.txt", ".github/workflows/sweep.yml"]
 
 permissions:
   contents: write   # commit updated data
@@ -20,7 +21,13 @@ concurrency:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    env:
+      WNTR_TIME_BUDGET: "180"
+      WNTR_NOMINATIM_CAP: "10"
+      WNTR_LINKCHECK_CAP: "25"
+      WNTR_SKY_CAP: "300"
+      WNTR_SKY_BUDGET: "120"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,7 +36,7 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -r requirements.txt
-      - name: Cache Sky Check data (ephemeris, TLEs, launches)
+      - name: Cache Sky Check data (ephemeris, orbit data, launches)
         uses: actions/cache@v4
         with:
           path: .cache/sky
@@ -50,9 +57,14 @@ jobs:
             git push
           fi
       - name: Package site
-        uses: actions/upload-pages-artifact@v3
+        run: |
+          rm -rf _site && cp -r docs _site
+          mkdir -p _site/_state && cp state/* _site/_state/
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: _site
 
   deploy:
     needs: sweep

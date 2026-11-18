@@ -3,7 +3,7 @@
    The map element is created once and re-attached after every page render, so zoom/pan survive. */
 (function () {
   "use strict";
-  if (!window.L) return; // app.js falls back to the built-in SVG outline map
+  if (!window.L || window.WNTRLiveMap) return; // 3D globe already active, or no Leaflet: app.js falls back to the SVG outline map
   var L = window.L;
   var ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
   var ESRI_ATTR = 'Imagery &copy; <a href="https://www.esri.com/" target="_blank" rel="noopener">Esri</a>, Maxar, Earthstar Geographics, and the GIS User Community';
@@ -14,7 +14,7 @@
     var labels = function () { return esriLayer("Reference/World_Boundaries_and_Places", { attribution: "Labels &copy; Esri", pane: "labels" }); };
     return {
       "Satellite (Earth view)": L.layerGroup([esriLayer("World_Imagery"), labels()]),
-      "Dark map": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 19, attribution: OSM_ATTR + ' &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' }),
+      "Dark map": L.layerGroup([esriLayer("Canvas/World_Dark_Gray_Base", { maxNativeZoom: 16, attribution: "Tiles &copy; Esri, HERE, Garmin, " + OSM_ATTR }), esriLayer("Canvas/World_Dark_Gray_Reference", { maxNativeZoom: 16, attribution: "Labels &copy; Esri", pane: "labels" })]),
       "Streets": esriLayer("World_Street_Map", { attribution: "Tiles &copy; Esri, HERE, Garmin, " + OSM_ATTR }),
       "Terrain": esriLayer("World_Topo_Map", { attribution: "Tiles &copy; Esri, HERE, Garmin, USGS, " + OSM_ATTR })
     };
@@ -64,7 +64,7 @@
     map.on("popupopen", function (e) {
       var el = e.popup.getElement(); if (!el) return;
       Array.prototype.forEach.call(el.querySelectorAll("[data-open]"), function (b) {
-        b.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); map.closePopup(); onOpen(b.getAttribute("data-open")); });
+        b.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); map.closePopup(); onOpen(b.getAttribute("data-open"), b.hasAttribute("data-sky")); });
       });
     });
   }
@@ -119,6 +119,7 @@
   }
 
   window.WNTRLiveMap = {
+    kind: "leaflet",
     attach: function (slot, opts) {
       if (!host) create();
       if (host.parentNode !== slot) { slot.appendChild(host); }

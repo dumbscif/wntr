@@ -5,7 +5,6 @@
 "nom:argentina": null,
 "nom:britain": null,
 "nom:central florida": null,
-"nom:charge, who": null,
 "nom:england": null,
 "nom:guatemala": null,
 "nom:iraq": null,
@@ -22,6 +21,5 @@
 "precision": "approximate; OpenStreetMap Nominatim lookup of 'Lakenheath'; not an object position",
 "tz": null
 },
-"nom:south america": null,
-"nom:space pulsed": null
+"nom:south america": null
 }

@@ -145,6 +145,13 @@
   function project(lon, lat) { return { x: ((lon + 180) / 360) * 1000, y: ((90 - lat) / 180) * 500 }; }
   function dotRadius(c) { return 5 + Math.min(c, 6) * 2.2; }
   var pendingMap = null;
+  function skyShort(e) {
+    var sc = e.sky;
+    if (!sc) return "Sky Check · not run yet";
+    if (sc.status !== "checked") return "Sky Check unavailable: time not reported";
+    var n = sc.items.filter(function (i) { return i.flag; }).length;
+    return "Sky Check · " + (n ? n + " possible explanation" + (n === 1 ? "" : "s") : "nothing notable found");
+  }
   function popupHtml(x, isReport) {
     var c = isReport ? markerColor(x.marker) : CYAN;
     return '<div class="lm-pop"><div class="lm-pop-k"><span class="lm-pop-dot" style="' + (isReport ? "background:" + c + ";box-shadow:0 0 8px " + c : "border:2px solid " + c) + '"></span>' + esc(isReport ? reporterLabel(x) : "Context only · not a sighting") + "</div>" +
@@ -152,7 +159,8 @@
       (isReport ? "<div>" + esc(sightingLabel(x)) + "</div><div>" + esc(shortShape(x.shape)) + (x.media.length ? " · " + x.media.length + " media" : "") + (x.historical ? " · HISTORICAL" : "") + "</div>" : "<div>" + esc(x.date || "Activity date not reported") + "</div>") +
       "<div>First swept " + esc(formatDenver(x.sweptAt)) + " · " + x.sources.length + " source" + (x.sources.length === 1 ? "" : "s") + "</div>" +
       '<div class="lm-pop-p">' + esc(x.precision || "") + "</div>" +
-      '<button type="button" class="lm-open" data-open="' + esc(x.id) + '">Open full record &amp; sources</button></div>';
+      '<button type="button" class="lm-open" data-open="' + esc(x.id) + '">Open full record &amp; sources</button>' +
+      (isReport ? '<button type="button" class="lm-open lm-sky" data-open="' + esc(x.id) + '" data-sky="1">' + esc(skyShort(x)) + "</button>" : "") + "</div>";
   }
   function worldMap(events, contexts, focus, mode, selectedId) {
     if (window.WNTRLiveMap) {
@@ -161,7 +169,9 @@
       pendingMap = { items: items, selectedId: selectedId, mode: mode, focus: mode === "location" && focus ? { id: focus.id, lat: focus.lat, lon: focus.lon } : null,
         fitKey: mode + "|" + (mode === "location" && focus ? focus.id : "") + "|" + S.layers.red + S.layers.blue + S.layers.yellow + S.layers.context + "|" + S.mapNonce, onOpen: openRecord };
       return '<div class="map-wrap live"><div id="map-slot" class="map-slot"></div></div>' +
-        '<p class="muted map-hint">Drag to pan · scroll, pinch or use +/− to zoom · ⤢ fits all markers · layer button (top right) switches Satellite, Dark, Streets and Terrain. Nearby markers group into numbered bubbles; click one to zoom in or spread them out.</p>';
+        (window.WNTRLiveMap.kind === "globe"
+          ? '<p class="muted map-hint">3D globe: drag to rotate · scroll or pinch to zoom from the whole Earth to street level · 🌐 resets the view · ⤢ fits all markers · ⟳ slow spin (stops when you touch the globe) · Satellite / Dark / Streets at the bottom right · the globe button (top right) flattens it to a 2D map. Nearby markers group into numbered bubbles; tap one to zoom in.</p>'
+          : '<p class="muted map-hint">2D map (3D globe needs WebGL): drag to pan · scroll, pinch or use +/− to zoom · ⤢ fits all markers · layer button (top right) switches Satellite, Dark, Streets and Terrain. Nearby markers group into numbered bubbles; click one to zoom in or spread them out.</p>');
     }
     var vb = "0 0 1000 500";
     if (mode === "location" && focus) { var p = project(focus.lon, focus.lat); vb = (p.x - 80) + " " + (p.y - 45) + " 160 90"; }
@@ -340,7 +350,7 @@
       howGradingSection() +
       section(null, "Sweep sources · last run", rows(feeds)) +
       section(null, "Methodology & caveats",
-        text("Public-source claims are unverified, coverage is bounded and uneven, and this is not an exhaustive census or a private/deep-web search. The site is rebuilt by an automatic sweep about twice a day; it is not a live stream.") +
+        text("Public-source claims are unverified, coverage is bounded and uneven, and this is not an exhaustive census or a private/deep-web search. The site is rebuilt by scheduled automatic sweeps (" + esc(META.schedule || "see Automatic sweeps") + "); it is not a live stream.") +
         text("The map uses first-swept times within the 24 hours ending at the latest sweep, not browser time, sighting dates or availability checks. A historical event can be newly discovered; its source-local date and uncertainty remain visible. Archive and shape totals never age off with map markers.") +
         text("Red: civilian or affiliation-unknown claims. Blue: alleged unidentified-craft testing, never ordinary known aircraft/rocket testing. Yellow: cited military witness or official confirmation of this report, not evidence of an alien or military craft. Cyan: separate OSINT/military context, not corroboration or a live track. Supported distinct reports determine dot size, not witnesses, clips or engagement.") +
         text("Inclusion rule (same as the Grok Page): only concrete, newly reported sightings are logged - a described observation (lights, shape, motion) from a first-hand witness, a witness-report database (UFO Meldpunt, Probed, Aliens.co.il, UFO Hunters, MUFON) or local media relaying a resident's report or footage, tied to a place. General UFO news, politics/disclosure, declassified files, documentaries/TV, explainers, opinion/theories, listicles and historical rehashes are left out; military, launch and airspace items appear only as cyan context. Items the sweep read but left out are kept with their reasons in data/excluded.json.") +
@@ -424,7 +434,12 @@
     else if (opts.focusTab) { var t = document.getElementById("watch-tab-" + S.tab); if (t) t.focus(); }
     else if (activeId) { var el = document.getElementById(activeId); if (el) { el.focus({ preventScroll: true }); if (selStart !== null && el.setSelectionRange) { try { el.setSelectionRange(selStart, selEnd); } catch (err) { } } } }
   }
-  function openRecord(id) { var x = findAny(id); if (!x) return; if (REPORTS.indexOf(x) >= 0) S.selectedId = id; S.detailId = id; S.globalQuery = ""; render({ focusClose: true }); }
+  function openRecord(id, sky) {
+    var x = findAny(id); if (!x) return; if (REPORTS.indexOf(x) >= 0) S.selectedId = id; S.detailId = id; S.globalQuery = "";
+    if (sky) openDetails["d-sky|" + id] = true;
+    render({ focusClose: !sky });
+    if (sky) { var d = document.querySelector('[data-key="d-sky|' + id + '"]') || document.querySelector(".watch-drawer .skybox"); if (d) { if (d.tagName === "DETAILS") d.open = true; d.scrollIntoView({ block: "start" }); var sm = d.querySelector("summary"); if (sm) sm.focus({ preventScroll: true }); } }
+  }
   function resetDb() { S.query = ""; S.reporterFilter = "all"; S.markerFilter = "all"; S.countryFilter = "all"; S.continentFilter = "all"; S.shapeFolder = "all"; S.sortOrder = "newest"; S.regionQuery = ""; S.dateMode = "swept"; S.fromDate = ""; S.toDate = ""; S.onlyMedia = false; S.minGrade = "1"; }
 
   app.addEventListener("click", function (ev) {

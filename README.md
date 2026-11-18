@@ -1,10 +1,10 @@
 # WNTR:\\\\Project StarFire UFO Sighting Tracker — free public web app
 
 A free website anyone can open (no sign-in, no payment) that shows a worldwide, sourced archive of UFO/UAP sighting reports.
-It updates itself twice a day on GitHub's free servers. **It uses no AI and no Grok usage.** A small Python program
+It updates itself automatically: hourly on GitHub (free for public repos), twice a day on GitLab. **It uses no AI and no Grok usage.** A small Python program
 reads public news and report feeds, keeps sighting reports, finds the place on a map, and publishes the site.
 
-- **Map**: glowing dots for reports first found in the last 24 hours (red = civilian/unknown, blue = alleged testing,
+- **Map**: a 3D globe (MapLibre GL, satellite imagery to street level; 2D Leaflet map if WebGL is missing) with glowing dots for reports first found in the last 24 hours (red = civilian/unknown, blue = alleged testing,
   yellow = article says officials/military/police confirmed or identified something, hollow cyan = OSINT/context).
 - **Latest**: everything found in the last 24 hours, including items with no location (never given made-up coordinates).
 - **Archive**: every report ever found, permanent, with search and filters.
@@ -81,9 +81,10 @@ You only need a web browser. Everything is free.
 - Send that address to anyone. They don't need a GitHub account, an app, or any payment.
 - On a phone, open the address and use **Share → Add to Home Screen** to get an app-like icon.
 
-From now on GitHub runs the sweep automatically every day at **4 AM and 4 PM MST** (11:00 and 23:00 UTC).
-GitHub's schedule uses UTC, so while daylight saving time is on (March–November, MDT) the runs land at **5 AM and 5 PM**.
-GitHub can start scheduled runs a few minutes to an hour late when its servers are busy.
+From now on GitHub runs the sweep automatically **every hour, on the hour** (`cron: "0 * * * *"`, UTC). Public repositories
+get free, unlimited Actions minutes. Each run commits the updated `docs/data` and `state` back to the repo and redeploys Pages.
+GitHub can start scheduled runs a few minutes late when its servers are busy. All paths are relative, so the site works under
+the project subpath `https://USER.github.io/wntr/`.
 
 ---
 
@@ -97,7 +98,7 @@ GitHub can start scheduled runs a few minutes to an hour late when its servers a
 - **The site shows "Could not load data/events.json":** wait a minute and refresh; the first publish can lag.
 - **Automatic runs stopped:** GitHub pauses schedules in public repos after 60 days without activity. The sweep's own
   data commits normally count as activity, but if you ever see a "disabled" banner in Actions, click **Enable workflow**.
-- **Want a different time?** Edit `.github/workflows/sweep.yml` and change the two `cron:` lines (UTC times).
+- **Want a different schedule?** Edit `.github/workflows/sweep.yml` and change the `cron:` line (UTC).
 
 ## Evidence grades and Sky Check
 
@@ -178,3 +179,13 @@ shown on the map. If Leaflet cannot load, the page falls back to the built-in SV
 ## Branding
 
 `docs/img/` holds the Project StarFire logo, only cropped, scaled and padded on its own dark background (#000719). It includes `banner-wide.png` (1600×400, desktop header) and `banner-compact.png` (960×300, phones). It also has `icon-512/192/180/32/16.png` and `favicon.ico`, which are the radar emblem crop. `og-1200x630.png` is the social-share image. `docs/manifest.webmanifest` lists the app icons.
+
+## 3D globe
+
+- `docs/globe.js` + `docs/vendor/maplibre` (MapLibre GL JS 5, BSD-3, bundled; no CDN or key) draw the Map tab as a globe:
+  drag to rotate, scroll/pinch from the whole Earth to street level, Satellite (Esri World Imagery + Esri labels/roads),
+  Dark (Esri Dark Gray Canvas) and Streets (Esri World Street Map). Markers keep their colours and meanings, cluster into
+  numbered bubbles, and open a popup with the evidence grade and a Sky Check link. 🌐 resets the view, ⤢ fits all markers,
+  ⟳ toggles a slow spin (off for reduced motion; stops when you touch the globe); the globe button flattens to 2D.
+- No WebGL, or `?map=2d`: the Leaflet 2D map (`docs/livemap.js`) loads instead. Cluster numbers use a bundled glyph file
+  (`docs/vendor/glyphs`). GitLab CI pre-compresses text files (`*.gz`) so the library downloads at ~280 KB.

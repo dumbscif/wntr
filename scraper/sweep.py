@@ -503,7 +503,13 @@ def log_excluded(ex, it, url, pub, a, record=None):
     ex["items"].insert(0, e)
 
 def save_excluded(ex):
-    ex["items"] = ex["items"][:EXCLUDED_CAP]
+    seen, uniq = set(), []
+    for e in ex["items"]:   # newest first; one entry per URL
+        k = norm_url(e.get("url") or "") or e.get("title")
+        if k in seen:
+            continue
+        seen.add(k); uniq.append(e)
+    ex["items"] = uniq[:EXCLUDED_CAP]
     ex["updatedAt"] = NOW_ISO
     ex["rules"] = RULES_TEXT
     tmp = EXCLUDED + ".tmp"

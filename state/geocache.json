@@ -12,6 +12,17 @@
 "nom:guatemala": null,
 "nom:iraq": null,
 "nom:italy": null,
+"nom:jhapa district, nepal": {
+"cc": "NP",
+"continent": "AS",
+"country": "Nepal",
+"gid": null,
+"lat": 26.5837,
+"lon": 87.8857,
+"place": "झापा जिल्ला, कोशी प्रदेश, नेपाल",
+"precision": "approximate; OpenStreetMap Nominatim lookup of 'Jhapa District, Nepal'; not an object position",
+"tz": null
+},
 "nom:joint base elmendorf-": null,
 "nom:lakenheath": {
 "cc": "GB",

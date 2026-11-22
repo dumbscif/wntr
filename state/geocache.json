@@ -36,6 +36,17 @@
 "precision": "approximate; OpenStreetMap Nominatim lookup of 'Lakenheath'; not an object position",
 "tz": null
 },
+"nom:llangollen": {
+"cc": "GB",
+"continent": "EU",
+"country": "United Kingdom",
+"gid": null,
+"lat": 52.9694,
+"lon": -3.1711,
+"place": "Llangollen, Denbighshire, Cymru / Wales, LL20 8PS, United Kingdom",
+"precision": "approximate; OpenStreetMap Nominatim lookup of 'Llangollen'; not an object position",
+"tz": null
+},
 "nom:mexico november": null,
 "nom:morrison, colorado. the poster state": null,
 "nom:portugal": null,

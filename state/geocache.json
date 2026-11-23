@@ -48,6 +48,17 @@
 "precision": "approximate; OpenStreetMap Nominatim lookup of 'Llangollen'; not an object position",
 "tz": null
 },
+"nom:medernach": {
+"cc": "LU",
+"continent": "EU",
+"country": "Luxembourg",
+"gid": null,
+"lat": 49.809,
+"lon": 6.2148,
+"place": "Medernach, Vallée de l'Ernz, Canton Diekirch, 7661, Lëtzebuerg",
+"precision": "approximate; OpenStreetMap Nominatim lookup of 'Medernach'; not an object position",
+"tz": null
+},
 "nom:mexico november": null,
 "nom:morrison, colorado. the poster state": null,
 "nom:portugal": null,
